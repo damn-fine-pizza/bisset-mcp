@@ -1,95 +1,97 @@
 # MCP Workflow Server
 
-A deterministic, role-based software-building workflow server using the **Model Context Protocol** (MCP) over **STDIO transport**.
+Two-process architecture for zero-downtime backend reloads:
 
-The LLM lives in the host (Copilot CLI). This server provides **Prompts + Resources + Tools** and manages workflow state via a state machine backed by SQLite.
+```
+Copilot CLI ──STDIO──▶ mcp_server (thin proxy) ──HTTP──▶ workflow_server (FastAPI)
+```
+
+- **mcp_server**: FastMCP STDIO proxy. Stays alive as long as Copilot CLI is connected.
+- **workflow_server**: FastAPI backend with engine, storage, catalog, renderers. Can be restarted/hot-reloaded independently.
 
 ---
 
 ## Prerequisites
 
-- Python 3.12+ via `pyenv` env `bisset-mcp`
-- MCP SDK: `pip install "mcp[cli]"` (already in `bisset-mcp`)
+- pyenv env `bisset-mcp` (Python 3.12)
+- `pip install -r orchestrator/workflow_server/requirements.txt`
 
 ---
 
-## Running the server locally
+## Running locally
+
+### 1 — Start the backend
 
 ```bash
-# From repo root (pyenv will auto-select bisset-mcp via .python-version)
-python -m orchestrator.mcp_workflow_server
+python -m orchestrator.workflow_server
+# or with hot-reload:
+uvicorn orchestrator.workflow_server.app:app --reload --port 8765
 ```
 
-The server speaks the MCP protocol over STDIO (line-delimited JSON-RPC). It is meant to be launched as a subprocess by a Copilot CLI MCP host.
+### 2 — Start the MCP proxy (in a separate terminal or as subprocess)
+
+```bash
+python -m orchestrator.mcp_server
+```
+
+The proxy reads `WORKFLOW_BACKEND_URL` (default `http://127.0.0.1:8765`).
 
 ---
 
 ## Registering in Copilot CLI
 
 ```bash
-# Add as a local STDIO MCP server
 /mcp add name=bisset-workflow \
-         cmd="python -m orchestrator.mcp_workflow_server" \
+         cmd="python -m orchestrator.mcp_server" \
          transport=stdio \
          cwd="$(pwd)"
 ```
 
 ---
 
-## Example interactive session
+## Example session
 
-### 1. Start workflow
+### Start workflow
 
 ```json
-{"method": "tools/call", "params": {"name": "workflow_start", "arguments": {"project_meta": {"name": "MyApp"}}}}
+{"name": "workflow_start", "arguments": {"project_meta": {"name": "MyApp"}}}
 ```
 
-### 2. Get next question
+### Interview loop
 
 ```json
-{"method": "tools/call", "params": {"name": "workflow_next_question", "arguments": {}}}
+{"name": "workflow_next_question", "arguments": {}}
+{"name": "workflow_record_answer", "arguments": {"question_id": "q-001", "answer_text": "MyApp"}}
 ```
 
-### 3. Record answer
+Repeat until `next_question` returns `{"done": true}`.
+
+### Freeze spec
 
 ```json
-{"method": "tools/call", "params": {"name": "workflow_record_answer", "arguments": {"question_id": "q-001", "answer_text": "MyApp"}}}
+{"name": "workflow_freeze_spec", "arguments": {}}
 ```
 
-Repeat steps 2–3 until `next_question` returns `{"done": true}`.
+Produces:
+- `workflow_server/resources/spec_current.md`
+- `workflow_server/resources/decisions/adr-0001.md`
+- `workflow_server/resources/plan/workbreakdown.yaml`
 
-### 4. Freeze spec
-
-```json
-{"method": "tools/call", "params": {"name": "workflow_freeze_spec", "arguments": {}}}
-```
-
-This generates:
-- `resources/spec_current.md` — frozen project specification
-- `resources/decisions/adr-0001.md` — initial ADR stub
-- `resources/plan/workbreakdown.yaml` — task breakdown
-
-### 5. Execute task loop
+### Execution loop
 
 ```json
-{"method": "tools/call", "params": {"name": "workflow_next_task", "arguments": {}}}
-```
-
-```json
-{"method": "tools/call", "params": {"name": "workflow_accept_task_result", "arguments": {
-  "task_id": "t-001",
-  "summary": "Created project skeleton",
-  "artifacts_changed": ["pyproject.toml", ".github/workflows/ci.yml"],
-  "tests_run": ["test_smoke"],
-  "test_results": {"passed": 1, "failed": 0}
-}}}
+{"name": "workflow_next_task", "arguments": {}}
+{"name": "workflow_accept_task_result", "arguments": {
+  "task_id": "t-001", "summary": "done",
+  "artifacts_changed": [], "tests_run": [], "test_results": {}
+}}
 ```
 
 Repeat until `workflow_is_done` returns `{"done": true}`.
 
 ---
 
-## Available Prompts
+## Prompts
 
 | Name | Parameters |
 |------|-----------|
@@ -102,42 +104,46 @@ Repeat until `workflow_is_done` returns `{"done": true}`.
 | `phases/design_review` | — |
 | `phases/implementation_loop` | — |
 
-## Available Resources
+## Resources
 
 | URI | Description |
 |-----|-------------|
 | `spec://current` | Frozen project specification |
-| `constraints://current` | Runtime/language/CI constraints JSON |
+| `constraints://current` | Runtime/language/CI constraints |
 | `decisions://adr-index` | ADR index |
 | `plan://workbreakdown` | Task breakdown YAML |
 
-## Available Tools
+## Tools
 
 | Tool | Description |
 |------|-------------|
-| `workflow_start` | Start workflow, seed question catalog |
+| `workflow_start` | Start workflow, seed questions |
 | `workflow_get_state` | Current phase + counts |
 | `workflow_next_question` | Next unanswered question |
-| `workflow_record_answer` | Record answer by question_id |
-| `workflow_freeze_spec` | Freeze spec, write ADR + plan, enter execution phase |
+| `workflow_record_answer` | Record answer |
+| `workflow_freeze_spec` | Freeze spec, enter execution |
 | `workflow_next_task` | Next pending task |
-| `workflow_accept_task_result` | Mark task done with evidence |
+| `workflow_accept_task_result` | Mark task done |
 | `workflow_report` | Progress summary |
-| `workflow_is_done` | True when all tasks complete |
+| `workflow_is_done` | True when complete |
 
 ---
 
-## Running tests
+## Tests
 
 ```bash
+# workflow_server (FastAPI + engine)
+python -m unittest discover -s orchestrator/workflow_server/tests -v
+
+# mcp_workflow_server legacy unit tests
 python -m unittest discover -s orchestrator/mcp_workflow_server/tests -v
 ```
 
 ---
 
-## Permissions / Safety
+## Safety
 
-- The server **does not call any external LLM APIs**.
-- Writes only under `orchestrator/mcp_workflow_server/resources/` and `orchestrator/mcp_workflow_server/workflow.db`.
-- Does not execute shell commands or read files outside the repo.
+- No external LLM API calls.
+- Writes only under `orchestrator/workflow_server/resources/` and `workflow.db`.
+- `mcp_server` only proxies; it writes nothing to disk.
 - Do not run as root.
