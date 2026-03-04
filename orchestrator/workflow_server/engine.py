@@ -75,12 +75,14 @@ class WorkflowEngine:
             logger.info('next_question: all answered')
             return {'done': True, 'message': 'All questions answered'}
         qid, text = unanswered[0]
-        logger.info('next_question qid=%s remaining=%d', qid, len(unanswered))
+        logger.info('next_question qid=%s remaining=%d text=%r', qid, len(unanswered), text)
         return {'id': qid, 'text': text}
 
     def record_answer(self, question_id, answer_text):
+        unanswered = {q[0]: q[1] for q in self.storage.list_unanswered()}
+        question_text = unanswered.get(question_id, '?')
         self.storage.record_answer(question_id, answer_text)
-        logger.info('record_answer qid=%s answer=%r', question_id, answer_text[:80] if answer_text else '')
+        logger.info('record_answer qid=%s question=%r answer=%r', question_id, question_text, answer_text[:120] if answer_text else '')
         return {'ok': True, 'question_id': question_id}
 
     def freeze_spec(self):
@@ -122,6 +124,17 @@ class WorkflowEngine:
         return {'ok': True, 'task_id': task_id}
 
     def accept_task_result(self, task_id, summary, artifacts_changed, tests_run, test_results):
+        row = self.storage.get_task(task_id)
+        if row:
+            _, _, _, _, acceptance_criteria = row
+            if acceptance_criteria and not tests_run:
+                logger.warning('accept_task_result blocked: task %s has acceptance_criteria but tests_run is empty', task_id)
+                return {
+                    'error': (
+                        f'Task {task_id!r} has acceptance_criteria — you must run the BDD tests '
+                        f'and pass tests_run (list of scenario names) and test_results before accepting.'
+                    )
+                }
         evidence = {'summary': summary, 'artifacts': artifacts_changed, 'tests_run': tests_run, 'test_results': test_results, 'ts': time.time()}
         self.storage.accept_task(task_id, evidence)
         all_done = self.storage.all_tasks_done()

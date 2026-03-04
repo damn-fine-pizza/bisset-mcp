@@ -154,6 +154,11 @@ class Storage:
                     (self.sid,))
         return cur.fetchone()
 
+    def get_task(self, tid: str):
+        cur = self.conn.cursor()
+        cur.execute('SELECT id, title, status, description, acceptance_criteria FROM tasks WHERE id=? AND session_id=?', (tid, self.sid))
+        return cur.fetchone()
+
     def accept_task(self, tid, evidence):
         cur = self.conn.cursor()
         cur.execute('UPDATE tasks SET status=?, done_at=?, evidence=? WHERE id=? AND session_id=?',
