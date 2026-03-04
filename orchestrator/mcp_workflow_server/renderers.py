@@ -1,6 +1,6 @@
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 class Renderers:
     def __init__(self, storage):
@@ -11,7 +11,7 @@ class Renderers:
 
     def render_spec(self, answers):
         spec_path = os.path.join(self.resources_dir, 'spec_current.md')
-        lines = ["# Project Specification", "", f"Generated: {datetime.utcnow().isoformat()}Z", ""]
+        lines = ["# Project Specification", "", f"Generated: {datetime.now(timezone.utc).isoformat()}", ""]
         for qid, text, answer in answers:
             lines.append(f"## {qid} - {text}")
             lines.append(answer or "_UNANSWERED_")
