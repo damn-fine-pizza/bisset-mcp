@@ -1,0 +1,1 @@
+Agent: MCP Workflow Server\n\nProvides deterministic questions and task orchestration over STDIO JSON-RPC for Copilot CLI integration.\n

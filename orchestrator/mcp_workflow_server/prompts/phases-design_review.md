@@ -1,0 +1,1 @@
+Phase: Design Review\nPrompt: Review frozen spec and list missing design items. Output a deterministic checklist of ADRs to create and tasks to adjust.\n

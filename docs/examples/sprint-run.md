@@ -1,0 +1,79 @@
+# Esempio Sprint Run — Progetto di prova
+
+Output generato dalla pipeline /sprint (modalità prompts fallback, USE_LLM=false).
+
+## Senior Product Manager
+
+# Senior Product Manager output
+
+Template output for Senior Product Manager.
+
+- Executive summary: Brief vision and target users
+- Goals and KPIs: List measurable goals
+- Scope: in/out
+- Stakeholders: list
+- High-level roadmap: milestones
+- Risks & dependencies
+
+## Product Owner
+
+# Product Owner output
+
+Template output for Product Owner.
+
+- Epics (2-4) with short descriptions
+- User stories per epic with acceptance criteria
+- Prioritization (MoSCoW) and sprint 1 selection
+
+## Senior UX Designer
+
+# Senior UX Designer output
+
+Template output for Senior UX Designer.
+
+- Personas (2-3)
+- Key user flows
+- Wireframe descriptions (textual)
+- Component inventory
+
+## Senior Database Engineer
+
+# Senior Database Engineer output
+
+Template output for Senior Database Engineer.
+
+- ER diagram (textual)
+- CREATE TABLE statements (Postgres)
+- Indexing and migration notes
+
+## Software Architect
+
+# Software Architect output
+
+Template output for Software Architect.
+
+- System architecture overview
+- Tech stack choices and rationale
+- REST API contract examples
+- Folder/module structure suggestion
+
+## Senior Backend Developer
+
+# Senior Backend Developer output
+
+Template output for Senior Backend Developer.
+
+- Module/service structure
+- Core data models
+- Example implementation of 2-3 endpoints
+- Unit test examples
+
+## Senior Frontend Developer
+
+# Senior Frontend Developer output
+
+Template output for Senior Frontend Developer.
+
+- Component tree and key components (React + TypeScript)
+- Sample component implementation
+- API integration snippets

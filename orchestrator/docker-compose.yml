@@ -1,0 +1,127 @@
+version: '3.8'
+
+x-agent-env: &agent-env
+  MCP_URL: http://mcp:3000
+  OPENAI_API_KEY: ${OPENAI_API_KEY}
+  LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+
+services:
+  mcp:
+    image: node:18
+    container_name: mcp
+    volumes:
+      - ../mcp-example:/srv
+    working_dir: /srv
+    command: sh -c "npm install --no-audit --no-fund && npm start"
+    ports:
+      - "3000:3000"
+
+  orchestrator:
+    image: python:3.11-slim
+    container_name: orchestrator
+    volumes:
+      - ./orchestrator:/srv/orchestrator
+    working_dir: /srv/orchestrator
+    environment:
+      MCP_URL: http://mcp:3000
+    command: sh -c "pip install -r requirements.txt && python app.py"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mcp
+
+  agent-sw-architect:
+    image: python:3.11-slim
+    container_name: agent-sw-architect
+    volumes:
+      - ./agents/agent-sw-architect:/srv
+    working_dir: /srv
+    environment:
+      <<: *agent-env
+    command: sh -c "pip install -r requirements.txt && python app.py"
+    ports:
+      - "8101:8000"
+
+  agent-product-owner:
+    image: python:3.11-slim
+    container_name: agent-product-owner
+    volumes:
+      - ./agents/agent-product-owner:/srv
+    working_dir: /srv
+    environment:
+      <<: *agent-env
+    command: sh -c "pip install -r requirements.txt && python app.py"
+    ports:
+      - "8102:8000"
+
+  agent-senior-developer:
+    image: python:3.11-slim
+    container_name: agent-senior-developer
+    volumes:
+      - ./agents/agent-senior-developer:/srv
+    working_dir: /srv
+    environment:
+      <<: *agent-env
+    command: sh -c "pip install -r requirements.txt && python app.py"
+    ports:
+      - "8103:8000"
+
+  agent-senior-frontend-developer:
+    image: python:3.11-slim
+    container_name: agent-senior-frontend-developer
+    volumes:
+      - ./agents/agent-senior-frontend-developer:/srv
+    working_dir: /srv
+    environment:
+      <<: *agent-env
+    command: sh -c "pip install -r requirements.txt && python app.py"
+    ports:
+      - "8104:8000"
+
+  agent-senior-database-engineer:
+    image: python:3.11-slim
+    container_name: agent-senior-database-engineer
+    volumes:
+      - ./agents/agent-senior-database-engineer:/srv
+    working_dir: /srv
+    environment:
+      <<: *agent-env
+    command: sh -c "pip install -r requirements.txt && python app.py"
+    ports:
+      - "8105:8000"
+
+  agent-senior-qa-engineer:
+    image: python:3.11-slim
+    container_name: agent-senior-qa-engineer
+    volumes:
+      - ./agents/agent-senior-qa-engineer:/srv
+    working_dir: /srv
+    environment:
+      <<: *agent-env
+    command: sh -c "pip install -r requirements.txt && python app.py"
+    ports:
+      - "8106:8000"
+
+  agent-ux-designer-senior:
+    image: python:3.11-slim
+    container_name: agent-ux-designer-senior
+    volumes:
+      - ./agents/agent-ux-designer-senior:/srv
+    working_dir: /srv
+    environment:
+      <<: *agent-env
+    command: sh -c "pip install -r requirements.txt && python app.py"
+    ports:
+      - "8107:8000"
+
+  agent-senior-product-manager:
+    image: python:3.11-slim
+    container_name: agent-senior-product-manager
+    volumes:
+      - ./agents/agent-senior-product-manager:/srv
+    working_dir: /srv
+    environment:
+      <<: *agent-env
+    command: sh -c "pip install -r requirements.txt && python app.py"
+    ports:
+      - "8108:8000"
