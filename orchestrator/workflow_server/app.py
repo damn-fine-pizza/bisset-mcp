@@ -216,10 +216,19 @@ def _qa_block(answers: dict) -> str:
     return '\n'.join(lines) if lines else '_(no answers yet)_'
 
 
+_LANG_RULE = """> **Language rule**: regardless of the conversation language, all text you write
+> into Bisset tools (`answer_text`, `summary`, `title`, `description`,
+> `acceptance_criteria`, artifact paths, etc.) **must be in English**.
+> You may speak to the user in any language, but every value stored in the
+> workflow database must be English."""
+
+
 def _prompt_requirements_interview(answers: dict, phase: str) -> str:
     answered = {k: v for k, v in answers.items() if v[1]}
     unanswered = {k: v for k, v in answers.items() if not v[1]}
     return f"""# Requirements Interview
+
+{_LANG_RULE}
 
 You are conducting a structured requirements interview.
 
@@ -244,6 +253,8 @@ You are conducting a structured requirements interview.
 
 def _prompt_design_review(answers: dict, project_name: str) -> str:
     return f"""# Design Review — {project_name}
+
+{_LANG_RULE}
 
 You are reviewing the project specification after the requirements interview.
 
@@ -286,6 +297,8 @@ def _prompt_implementation_loop(answers: dict, project_name: str, phase: str) ->
 
     return f"""# Implementation Loop — {project_name}
 
+{_LANG_RULE}
+
 You are implementing the project task by task.
 
 ## Your job
@@ -307,6 +320,8 @@ You are implementing the project task by task.
 
 def _prompt_role(role: str, project_name: str, answers: dict, phase: str, responsibility: str) -> str:
     return f"""# Role: {role} — {project_name}
+
+{_LANG_RULE}
 
 ## Responsibility
 {responsibility}
