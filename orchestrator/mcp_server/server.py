@@ -17,61 +17,57 @@ from . import client
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('mcp-server')
 
-PROMPTS_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
-
 mcp = FastMCP('BissetMCP Workflow Orchestrator')
 
 
-# ─── Prompts ─────────────────────────────────────────────────────────────────
-
-def _local_prompt(filename: str) -> str:
-    with open(os.path.join(PROMPTS_DIR, filename)) as f:
-        return f.read()
-
-
-@mcp.prompt(name='roles/architect')
-def prompt_architect(project_name: str = '', constraints: str = '', current_phase: str = '') -> str:
-    tmpl = _local_prompt('roles-architect.md')
-    return tmpl + f'\n\nproject_name={project_name}\nconstraints={constraints}\ncurrent_phase={current_phase}'
-
-
-@mcp.prompt(name='roles/product_owner')
-def prompt_product_owner(project_name: str = '', business_goals: str = '') -> str:
-    tmpl = _local_prompt('roles-product_owner.md')
-    return tmpl + f'\n\nproject_name={project_name}\nbusiness_goals={business_goals}'
-
-
-@mcp.prompt(name='roles/tech_lead')
-def prompt_tech_lead(project_name: str = '', tech_stack: str = '') -> str:
-    tmpl = _local_prompt('roles-tech_lead.md')
-    return tmpl + f'\n\nproject_name={project_name}\ntech_stack={tech_stack}'
-
-
-@mcp.prompt(name='roles/test_engineer')
-def prompt_test_engineer(project_name: str = '', testing_scope: str = '') -> str:
-    tmpl = _local_prompt('roles-test_engineer.md')
-    return tmpl + f'\n\nproject_name={project_name}\ntesting_scope={testing_scope}'
-
-
-@mcp.prompt(name='roles/build_engineer')
-def prompt_build_engineer(project_name: str = '', ci_constraints: str = '') -> str:
-    tmpl = _local_prompt('roles-build_engineer.md')
-    return tmpl + f'\n\nproject_name={project_name}\nci_constraints={ci_constraints}'
-
+# ─── Prompts (dynamic — fetched from workflow_server) ────────────────────────
 
 @mcp.prompt(name='phases/requirements_interview')
 def prompt_requirements_interview() -> str:
-    return _local_prompt('phases-requirements_interview.md')
+    """Current interview state: answered questions, pending questions, next action."""
+    return client.get_prompt('phases/requirements_interview')
 
 
 @mcp.prompt(name='phases/design_review')
 def prompt_design_review() -> str:
-    return _local_prompt('phases-design_review.md')
+    """Full spec for review after interview freeze."""
+    return client.get_prompt('phases/design_review')
 
 
 @mcp.prompt(name='phases/implementation_loop')
 def prompt_implementation_loop() -> str:
-    return _local_prompt('phases-implementation_loop.md')
+    """Current task + full project context for implementation."""
+    return client.get_prompt('phases/implementation_loop')
+
+
+@mcp.prompt(name='roles/architect')
+def prompt_architect() -> str:
+    """Architect role with live project context."""
+    return client.get_prompt('roles/architect')
+
+
+@mcp.prompt(name='roles/product_owner')
+def prompt_product_owner() -> str:
+    """Product Owner role with live project context."""
+    return client.get_prompt('roles/product_owner')
+
+
+@mcp.prompt(name='roles/tech_lead')
+def prompt_tech_lead() -> str:
+    """Tech Lead role with live project context."""
+    return client.get_prompt('roles/tech_lead')
+
+
+@mcp.prompt(name='roles/test_engineer')
+def prompt_test_engineer() -> str:
+    """Test Engineer role with live project context."""
+    return client.get_prompt('roles/test_engineer')
+
+
+@mcp.prompt(name='roles/build_engineer')
+def prompt_build_engineer() -> str:
+    """Build Engineer role with live project context."""
+    return client.get_prompt('roles/build_engineer')
 
 
 # ─── Resources (proxied from workflow_server) ─────────────────────────────────
