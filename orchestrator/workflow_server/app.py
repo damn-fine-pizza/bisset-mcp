@@ -64,6 +64,8 @@ def tool_list_sessions(req: ToolRequest):
 
 @app.post('/tools/workflow_list_tasks')
 def tool_list_tasks(req: ToolRequest):
+    if not _storage._active_session_id:
+        return {'tasks': []}
     status_filter = req.arguments.get('status')
     rows = _storage.list_tasks()
     tasks = [{'id': r[0], 'title': r[1], 'status': r[2], 'created_at': r[3], 'done_at': r[4],
@@ -86,6 +88,8 @@ def tool_add_task(req: ToolRequest):
 
 @app.post('/tools/workflow_list_questions')
 def tool_list_questions(req: ToolRequest):
+    if not _storage._active_session_id:
+        return {'questions': []}
     answered_filter = req.arguments.get('answered')
     rows = _storage.get_all_answers()
     questions = [{'id': r[0], 'text': r[1], 'answer': r[2]} for r in rows]
@@ -179,6 +183,8 @@ def get_prompt(name: str):
 
 
 def _build_prompt(name: str) -> str | None:
+    if not _storage._active_session_id:
+        return f"# No active session\nCall `workflow_new_session()` then `workflow_start()` to begin."
     answers = {row[0]: (row[1], row[2]) for row in _storage.get_all_answers()}  # qid -> (text, answer)
     meta = _storage.read_meta('project_meta') or {}
     phase = _storage.read_meta('phase') or 'interview'
