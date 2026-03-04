@@ -1,1 +1,5 @@
-{\n  "languages": ["python"],\n  "runtimes": ["linux"],\n  "ci": "github-actions"\n}\n
+{
+  "languages": ["python"],
+  "runtimes": ["linux"],
+  "ci": "github-actions"
+}

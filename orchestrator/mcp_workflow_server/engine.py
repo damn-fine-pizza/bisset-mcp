@@ -53,6 +53,8 @@ class WorkflowEngine:
         return {'spec_path': spec_path}
 
     def next_task(self):
+        if self.phase == 'done':
+            return {'done': True, 'message': 'All tasks complete'}
         if self.phase != 'execution':
             return {'error': 'not in execution phase'}
         t = self.storage.next_pending_task()
