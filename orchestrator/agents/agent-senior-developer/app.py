@@ -1,13 +1,10 @@
 from flask import Flask, request, jsonify
 import os
-import pathlib
 from openai import OpenAI
 
 ROLE = "Senior Backend Developer"
 MODEL = os.environ.get('LLM_MODEL', 'gpt-4o-mini')
-USE_LLM = os.environ.get('USE_LLM','false').lower() == 'true'
-PROMPTS_DIR = os.environ.get('PROMPTS_DIR','./prompts')
-client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY', '')) if USE_LLM else None
+client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY', ''))
 app = Flask(__name__)
 
 SYSTEM_PROMPT = """You are a Senior Backend Developer in a Scrum team.
@@ -20,33 +17,59 @@ Based on the architecture, DB schema and API contract, produce a backend impleme
 - Unit test examples for the critical business logic
 Write clean, production-quality code with docstrings."""
 
+FIX_SYSTEM_PROMPT = """You are a Senior Backend Developer fixing failing Gherkin/behave tests.
+You will receive:
+1. The list of failing test scenarios with error messages
+2. The existing implementation context
+
+Produce ONLY the code changes needed to fix the failing tests. Format your response as markdown with:
+- A brief explanation of what is wrong
+- The exact file(s) to create or modify with full file content (use ```python fences with the filename as comment)
+
+Do NOT rewrite working code. Focus only on what makes the failing tests pass."""
+
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     payload = request.json or {}
-    print(f"[{ROLE}] processing task")
-    parts = [f"# Project: {payload.get('project', '')}"]
-    for t in payload.get('context', []):
-        parts.append(f"\n## {t['by']}\n{t.get('output', '')}")
-    user_msg = "\n".join(parts) + f"\n\nNow produce your full contribution as {ROLE}."
-    if not USE_LLM:
-        p = pathlib.Path(PROMPTS_DIR)/f"{ROLE}.md"
-        output = p.read_text() if p.exists() else f"# {ROLE} output\n\n(No prompt template found)"
+    mode = payload.get('mode', 'full')
+    print(f"[{ROLE}] processing task (mode={mode})")
+
+    if mode == 'fix':
+        failing_tests = payload.get('failing_tests', [])
+        coverage_pct = payload.get('coverage_pct', 0)
+        parts = ["# Failing Gherkin Tests\n"]
+        for t in failing_tests:
+            parts.append(f"## {t.get('scenario', 'unknown')}\n```\n{t.get('error', '')}\n```")
+        parts.append("\n# Existing Implementation Context\n")
+        for t in payload.get('context', []):
+            parts.append(f"\n## {t['by']}\n{t.get('output', '')}")
+        parts.append(f"\n\nCurrent coverage: {coverage_pct}%. Fix the failing tests to reach 80%+ coverage.")
+        user_msg = "\n".join(parts)
+        system = FIX_SYSTEM_PROMPT
+        max_tokens = 3000
     else:
-        try:
-            resp = client.chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-                max_tokens=2500,
-            )
-            output = resp.choices[0].message.content
-        except Exception as e:
-            output = f"[LLM error: {e}]"
+        parts = [f"# Project: {payload.get('project', '')}"]
+        for t in payload.get('context', []):
+            parts.append(f"\n## {t['by']}\n{t.get('output', '')}")
+        user_msg = "\n".join(parts) + f"\n\nNow produce your full contribution as {ROLE}."
+        system = SYSTEM_PROMPT
+        max_tokens = 2500
+
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=max_tokens,
+        )
+        output = resp.choices[0].message.content
+    except Exception as e:
+        output = f"[LLM error: {e}]"
     print(f"[{ROLE}] done")
-    return jsonify({'status': 'ok', 'role': ROLE, 'output': output})
+    return jsonify({'status': 'ok', 'role': ROLE, 'output': output, 'mode': mode})
 
 
 if __name__ == '__main__':

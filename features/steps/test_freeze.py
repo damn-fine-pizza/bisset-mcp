@@ -53,13 +53,14 @@ def adr_has_proposed(freeze_result):
     assert 'Proposed' in content
 
 
-@then(parsers.parse('it should contain {n:d} tasks'))
-def plan_has_n_tasks(freeze_result, n):
+@then(parsers.parse('it should contain the default tasks'))
+def plan_has_default_tasks(freeze_result):
+    from orchestrator.workflow_server.catalog import PLAN_TASKS
     base = os.path.dirname(freeze_result['spec_path'])
     plan_path = os.path.join(base, 'plan', 'workbreakdown.yaml')
     with open(plan_path) as f:
         content = f.read()
-    assert content.count('id: t-') == n
+    assert content.count('id: t-') == len(PLAN_TASKS)
 
 
 @then(parsers.parse('the workflow phase should be "{phase}"'))

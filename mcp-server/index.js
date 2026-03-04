@@ -7,6 +7,7 @@ import fs from 'fs/promises';
 import path from 'path';
 
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL ?? 'http://localhost:8080';
+const WORKFLOW_URL = process.env.WORKFLOW_URL ?? 'http://localhost:8765';
 const PROMPT_API_PORT = Number(process.env.MCP_PROMPT_PORT || 3000);
 
 const server = new McpServer({
@@ -16,6 +17,8 @@ const server = new McpServer({
 
 // in-memory sprint context (visible to Copilot CLI via get_context)
 let sprintContext = [];
+let currentProjectDir = '';
+let lastVerificationHistory = [];
 
 // --- Prompt storage (in-memory with simple audit trail)
 const AGENTS = [
@@ -160,6 +163,102 @@ server.tool(
   async () => {
     sprintContext = [];
     return { content: [{ type: 'text', text: 'Context reset.' }] };
+  },
+);
+
+// ── Bisset Workflow Session Management ────────────────────────────────────────
+
+async function wf(endpoint, args = {}) {
+  return postJSON(`${WORKFLOW_URL}/tools/${endpoint}`, { arguments: args });
+}
+
+server.tool(
+  'workflow_new_session',
+  'Create a new Bisset project session. Returns a session_id you can use to resume later.',
+  {
+    name: z.string().optional().describe('Human-readable name for this session, e.g. "Calculator app"'),
+  },
+  async ({ name }) => {
+    const data = await wf('workflow_new_session', { name: name ?? '' });
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  'workflow_list_sessions',
+  'List all Bisset project sessions (id, name, created_at, updated_at). Use workflow_switch_session to resume one.',
+  {},
+  async () => {
+    const data = await wf('workflow_list_sessions');
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  'workflow_switch_session',
+  'Switch to an existing Bisset session by its session_id. All subsequent workflow calls will use this session.',
+  {
+    session_id: z.string().describe('The session ID returned by workflow_new_session or workflow_list_sessions'),
+  },
+  async ({ session_id }) => {
+    const data = await wf('workflow_switch_session', { session_id });
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+// ── Sprint + Gherkin loop tools ───────────────────────────────────────────────
+
+server.tool(
+  'set_project_dir',
+  'Set the local project directory that Bisset will use for writing Gherkin feature files and running coverage checks.',
+  {
+    path: z.string().describe('Absolute path to the project directory'),
+  },
+  async ({ path: p }) => {
+    currentProjectDir = p;
+    return { content: [{ type: 'text', text: `Project dir set to: ${currentProjectDir}` }] };
+  },
+);
+
+server.tool(
+  'run_verification',
+  'Run behave + coverage against the current project directory. Returns coverage %, passing/failing scenarios.',
+  {},
+  async () => {
+    if (!currentProjectDir) {
+      return { content: [{ type: 'text', text: 'Error: call set_project_dir first.' }] };
+    }
+    const data = await postJSON(`${ORCHESTRATOR_URL}/run_coverage`, { project_dir: currentProjectDir });
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  'sprint_with_loop',
+  'Run the full Scrum pipeline for a project, write Gherkin tests, then loop fixing failures until coverage ≥ 80% or max 10 iterations.',
+  {
+    project:     z.string().describe('Natural language description of the project to build'),
+    project_dir: z.string().optional().describe('Absolute path to project directory (uses set_project_dir value if omitted)'),
+  },
+  async ({ project, project_dir }) => {
+    const dir = project_dir || currentProjectDir;
+    if (!dir) {
+      return { content: [{ type: 'text', text: 'Error: provide project_dir or call set_project_dir first.' }] };
+    }
+    currentProjectDir = dir;
+    const data = await postJSON(`${ORCHESTRATOR_URL}/sprint_with_loop`, { project, project_dir: dir });
+    lastVerificationHistory = data.coverage_history ?? [];
+    sprintContext = data.final_context ?? [];
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.tool(
+  'get_verification_history',
+  'Return the coverage history from the last sprint_with_loop run (one entry per iteration).',
+  {},
+  async () => {
+    return { content: [{ type: 'text', text: JSON.stringify(lastVerificationHistory, null, 2) }] };
   },
 );
 

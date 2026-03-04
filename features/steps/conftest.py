@@ -50,6 +50,7 @@ def workflow_client():
 @pytest.fixture
 def started_client(workflow_client):
     """TestClient with a workflow already started."""
+    workflow_client.post('/tools/workflow_new_session', json={'arguments': {'name': 'TestProject'}})
     workflow_client.post('/tools/workflow_start', json={'arguments': {'project_meta': {'name': 'TestProject'}}})
     return workflow_client
 

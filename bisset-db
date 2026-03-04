@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""
+bisset-db — offline CLI for inspecting and managing the Bisset workflow DB.
+
+Usage:
+  bisset-db list                        List all sessions
+  bisset-db show <session_id>           Full detail for a session
+  bisset-db search <query>              Search across all session content
+  bisset-db delete <session_id> [...]   Delete one or more sessions
+  bisset-db clean                       Interactive cleanup (choose which to keep)
+  bisset-db stats                       DB summary statistics
+
+The DB is located at:
+  orchestrator/workflow_server/workflow.db  (relative to this script)
+  or set BISSET_DB env var to override.
+"""
+import argparse
+import json
+import os
+import re
+import sqlite3
+import sys
+from datetime import datetime
+from pathlib import Path
+
+# ── locate DB ─────────────────────────────────────────────────────────────────
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_DB = SCRIPT_DIR / 'orchestrator' / 'workflow_server' / 'workflow.db'
+
+def get_db_path() -> Path:
+    p = Path(os.environ.get('BISSET_DB', DEFAULT_DB))
+    if not p.exists():
+        print(f"[bisset-db] DB not found: {p}", file=sys.stderr)
+        print(f"  Set BISSET_DB env var or start Bisset at least once to create it.", file=sys.stderr)
+        sys.exit(1)
+    return p
+
+
+def connect(db_path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# ── formatting helpers ────────────────────────────────────────────────────────
+
+def fmt_ts(ts) -> str:
+    if not ts:
+        return '-'
+    try:
+        return datetime.fromtimestamp(float(ts)).strftime('%Y-%m-%d %H:%M')
+    except Exception:
+        return str(ts)
+
+
+def col(text, code) -> str:
+    return f'\033[{code}m{text}\033[0m' if sys.stdout.isatty() else text
+
+
+def bold(t):   return col(t, '1')
+def green(t):  return col(t, '32')
+def red(t):    return col(t, '31')
+def yellow(t): return col(t, '33')
+def cyan(t):   return col(t, '36')
+def dim(t):    return col(t, '2')
+
+
+def status_icon(status: str) -> str:
+    return {'done': green('✓'), 'pending': yellow('○'), 'execution': cyan('▶'), 'interview': yellow('?')}.get(status, status)
+
+# ── commands ──────────────────────────────────────────────────────────────────
+
+def cmd_list(conn: sqlite3.Connection, args):
+    rows = conn.execute(
+        'SELECT id, name, created_at, updated_at FROM sessions ORDER BY created_at DESC'
+    ).fetchall()
+    if not rows:
+        print(dim('No sessions found.'))
+        return
+    print(f"  {'ID':<10}  {'NAME':<30}  {'CREATED':<17}  {'UPDATED':<17}  {'PHASE':<12}  TASKS")
+    print('  ' + '─' * 95)
+    for r in rows:
+        sid = r['id']
+        phase_row = conn.execute("SELECT v FROM meta WHERE k='phase' AND session_id=?", (sid,)).fetchone()
+        phase = json.loads(phase_row['v']) if phase_row else 'interview'
+        total = conn.execute("SELECT COUNT(*) FROM tasks WHERE session_id=?", (sid,)).fetchone()[0]
+        done  = conn.execute("SELECT COUNT(*) FROM tasks WHERE session_id=? AND status='done'", (sid,)).fetchone()[0]
+        tasks = f'{done}/{total}' if total else dim('-')
+        print(f"  {cyan(sid):<10}  {r['name']:<30}  {fmt_ts(r['created_at']):<17}  {fmt_ts(r['updated_at']):<17}  {phase:<12}  {tasks}")
+
+
+def cmd_show(conn: sqlite3.Connection, args):
+    sid = args.session_id
+    row = conn.execute('SELECT * FROM sessions WHERE id=?', (sid,)).fetchone()
+    if not row:
+        print(red(f"Session {sid!r} not found."))
+        sys.exit(1)
+
+    print(f"\n{bold('SESSION')}  {cyan(sid)}  —  {row['name']}")
+    print(f"  Created : {fmt_ts(row['created_at'])}")
+    print(f"  Updated : {fmt_ts(row['updated_at'])}")
+
+    # phase + project meta
+    phase_row = conn.execute("SELECT v FROM meta WHERE k='phase' AND session_id=?", (sid,)).fetchone()
+    phase = json.loads(phase_row['v']) if phase_row else 'interview'
+    meta_row  = conn.execute("SELECT v FROM meta WHERE k='project_meta' AND session_id=?", (sid,)).fetchone()
+    meta = json.loads(meta_row['v']) if meta_row else {}
+    print(f"  Phase   : {bold(phase)}")
+    if meta:
+        print(f"  Meta    : {json.dumps(meta, ensure_ascii=False)}")
+
+    # questions / answers
+    qs = conn.execute(
+        'SELECT id, text, answer, answered_at FROM questions WHERE session_id=? ORDER BY id', (sid,)
+    ).fetchall()
+    if qs:
+        print(f"\n{bold('QUESTIONS')}  ({len(qs)} total, {sum(1 for q in qs if q['answer'])} answered)")
+        for q in qs:
+            icon = green('✓') if q['answer'] else yellow('?')
+            print(f"  {icon} {dim(q['id'])}  {q['text']}")
+            if q['answer']:
+                for line in q['answer'].splitlines():
+                    print(f"      {dim('→')} {line}")
+
+    # tasks
+    tasks = conn.execute(
+        'SELECT id, title, status, created_at, done_at, evidence FROM tasks WHERE session_id=? ORDER BY created_at', (sid,)
+    ).fetchall()
+    if tasks:
+        print(f"\n{bold('TASKS')}  ({len(tasks)} total)")
+        for t in tasks:
+            icon = status_icon(t['status'])
+            suffix = dim(f'  done {fmt_ts(t["done_at"])}') if t['status'] == 'done' else ''
+            print(f"  {icon} {dim(t['id']):<30}  {t['title']}{suffix}")
+    print()
+
+
+def cmd_search(conn: sqlite3.Connection, args):
+    q = args.query.lower()
+    pattern = f'%{q}%'
+
+    hits = []
+
+    # search in session names
+    for r in conn.execute("SELECT id, name FROM sessions WHERE lower(name) LIKE ?", (pattern,)).fetchall():
+        hits.append((r['id'], 'name', r['name']))
+
+    # search in question texts
+    for r in conn.execute(
+        "SELECT session_id, id, text FROM questions WHERE lower(text) LIKE ? OR lower(coalesce(answer,'')) LIKE ?",
+        (pattern, pattern)
+    ).fetchall():
+        hits.append((r['session_id'], f"question {r['id']}", r['text']))
+
+    # search in task titles
+    for r in conn.execute(
+        "SELECT session_id, id, title FROM tasks WHERE lower(title) LIKE ?", (pattern,)
+    ).fetchall():
+        hits.append((r['session_id'], f"task {r['id']}", r['title']))
+
+    # search in meta values
+    for r in conn.execute(
+        "SELECT session_id, k, v FROM meta WHERE lower(v) LIKE ?", (pattern,)
+    ).fetchall():
+        hits.append((r['session_id'], f"meta:{r['k']}", r['v'][:120]))
+
+    if not hits:
+        print(dim(f'No results for {q!r}.'))
+        return
+
+    print(f"\n{bold(f'Search: {args.query}')}  —  {len(hits)} hit(s)\n")
+    by_session: dict = {}
+    for sid, field, text in hits:
+        by_session.setdefault(sid, []).append((field, text))
+
+    for sid, items in by_session.items():
+        name_row = conn.execute('SELECT name FROM sessions WHERE id=?', (sid,)).fetchone()
+        name = name_row['name'] if name_row else '?'
+        print(f"  {cyan(sid)}  {name}")
+        for field, text in items:
+            snippet = re.sub(re.escape(q), bold(q), text, flags=re.IGNORECASE)
+            print(f"    {dim(field)}: {snippet}")
+        print()
+
+
+def cmd_delete(conn: sqlite3.Connection, args):
+    for sid in args.session_ids:
+        row = conn.execute('SELECT name FROM sessions WHERE id=?', (sid,)).fetchone()
+        if not row:
+            print(red(f"  Session {sid!r} not found — skipping."))
+            continue
+        if not args.yes:
+            ans = input(f"  Delete session {cyan(sid)} ({row['name']})? [y/N] ").strip().lower()
+            if ans != 'y':
+                print(dim('  Skipped.'))
+                continue
+        for table in ('questions', 'tasks', 'meta'):
+            conn.execute(f'DELETE FROM {table} WHERE session_id=?', (sid,))
+        conn.execute('DELETE FROM sessions WHERE id=?', (sid,))
+        conn.commit()
+        print(green(f"  Deleted {sid}."))
+
+
+def cmd_clean(conn: sqlite3.Connection, args):
+    rows = conn.execute(
+        'SELECT id, name, created_at FROM sessions ORDER BY created_at DESC'
+    ).fetchall()
+    if not rows:
+        print(dim('No sessions to clean.'))
+        return
+    print(f"\n{bold('Interactive cleanup')}  —  enter session IDs to DELETE (space-separated), or blank to cancel.\n")
+    for i, r in enumerate(rows):
+        total = conn.execute("SELECT COUNT(*) FROM tasks WHERE session_id=?", (r['id'],)).fetchone()[0]
+        done  = conn.execute("SELECT COUNT(*) FROM tasks WHERE session_id=? AND status='done'", (r['id'],)).fetchone()[0]
+        print(f"  {dim(str(i+1)+'.')}  {cyan(r['id'])}  {r['name']:<30}  {fmt_ts(r['created_at'])}  tasks:{done}/{total}")
+    print()
+    raw = input('IDs to delete: ').strip()
+    if not raw:
+        print(dim('Cancelled.'))
+        return
+    to_delete = raw.split()
+    valid_ids = {r['id'] for r in rows}
+    for sid in to_delete:
+        if sid not in valid_ids:
+            print(red(f"  {sid!r} not found — skipping."))
+            continue
+        for table in ('questions', 'tasks', 'meta'):
+            conn.execute(f'DELETE FROM {table} WHERE session_id=?', (sid,))
+        conn.execute('DELETE FROM sessions WHERE id=?', (sid,))
+        conn.commit()
+        print(green(f"  Deleted {sid}."))
+
+
+def cmd_stats(conn: sqlite3.Connection, args):
+    sessions = conn.execute('SELECT COUNT(*) FROM sessions').fetchone()[0]
+    questions = conn.execute('SELECT COUNT(*) FROM questions').fetchone()[0]
+    answered  = conn.execute("SELECT COUNT(*) FROM questions WHERE answer IS NOT NULL").fetchone()[0]
+    tasks     = conn.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]
+    done_t    = conn.execute("SELECT COUNT(*) FROM tasks WHERE status='done'").fetchone()[0]
+    db_size   = Path(args._db_path).stat().st_size
+    print(f"\n{bold('Bisset DB stats')}  —  {dim(str(args._db_path))}")
+    print(f"  Sessions  : {sessions}")
+    print(f"  Questions : {answered}/{questions} answered")
+    print(f"  Tasks     : {done_t}/{tasks} done")
+    print(f"  DB size   : {db_size // 1024} KB\n")
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='bisset-db',
+        description='Offline management CLI for the Bisset workflow DB.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    sub = parser.add_subparsers(dest='cmd', required=True)
+
+    sub.add_parser('list', help='List all sessions')
+
+    p_show = sub.add_parser('show', help='Full detail for a session')
+    p_show.add_argument('session_id')
+
+    p_search = sub.add_parser('search', help='Search across all session content')
+    p_search.add_argument('query')
+
+    p_del = sub.add_parser('delete', help='Delete one or more sessions')
+    p_del.add_argument('session_ids', nargs='+', metavar='session_id')
+    p_del.add_argument('-y', '--yes', action='store_true', help='Skip confirmation')
+
+    sub.add_parser('clean', help='Interactive cleanup — choose sessions to delete')
+    sub.add_parser('stats', help='DB summary statistics')
+
+    args = parser.parse_args()
+    db_path = get_db_path()
+    args._db_path = db_path
+    conn = connect(db_path)
+
+    dispatch = {
+        'list':   cmd_list,
+        'show':   cmd_show,
+        'search': cmd_search,
+        'delete': cmd_delete,
+        'clean':  cmd_clean,
+        'stats':  cmd_stats,
+    }
+    dispatch[args.cmd](conn, args)
+    conn.close()
+
+
+if __name__ == '__main__':
+    main()

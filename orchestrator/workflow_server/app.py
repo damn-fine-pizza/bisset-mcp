@@ -44,6 +44,58 @@ class ToolRequest(BaseModel):
     arguments: dict[str, Any] = {}
 
 
+@app.post('/tools/workflow_new_session')
+def tool_new_session(req: ToolRequest):
+    return _engine.new_session(req.arguments.get('name', ''))
+
+
+@app.post('/tools/workflow_switch_session')
+def tool_switch_session(req: ToolRequest):
+    session_id = req.arguments.get('session_id', '')
+    if not session_id:
+        return {'error': 'session_id required'}
+    return _engine.switch_session(session_id)
+
+
+@app.post('/tools/workflow_list_sessions')
+def tool_list_sessions(req: ToolRequest):
+    return {'sessions': _engine.list_sessions()}
+
+
+@app.post('/tools/workflow_list_tasks')
+def tool_list_tasks(req: ToolRequest):
+    status_filter = req.arguments.get('status')
+    rows = _storage.list_tasks()
+    tasks = [{'id': r[0], 'title': r[1], 'status': r[2], 'created_at': r[3], 'done_at': r[4],
+               'evidence': r[5], 'description': r[6] or '', 'acceptance_criteria': r[7] or ''} for r in rows]
+    if status_filter:
+        tasks = [t for t in tasks if t['status'] == status_filter]
+    return {'tasks': tasks}
+
+
+@app.post('/tools/workflow_add_task')
+def tool_add_task(req: ToolRequest):
+    a = req.arguments
+    return _engine.add_task(
+        a['task_id'],
+        a['title'],
+        a.get('description', ''),
+        a.get('acceptance_criteria', ''),
+    )
+
+
+@app.post('/tools/workflow_list_questions')
+def tool_list_questions(req: ToolRequest):
+    answered_filter = req.arguments.get('answered')
+    rows = _storage.get_all_answers()
+    questions = [{'id': r[0], 'text': r[1], 'answer': r[2]} for r in rows]
+    if answered_filter is True:
+        questions = [q for q in questions if q['answer'] is not None]
+    elif answered_filter is False:
+        questions = [q for q in questions if q['answer'] is None]
+    return {'questions': questions}
+
+
 @app.post('/tools/workflow_start')
 def tool_start(req: ToolRequest):
     return _engine.start(req.arguments.get('project_meta', {}))
@@ -218,13 +270,17 @@ def _prompt_implementation_loop(answers: dict, project_name: str, phase: str) ->
     elif task.get('error'):
         task_section = f'⚠️ {task["error"]}'
     else:
+        ac_block = ''
+        if task.get('acceptance_criteria'):
+            ac_block = f"\n### Acceptance Criteria (Gherkin)\n```gherkin\n{task['acceptance_criteria']}\n```\n"
+        desc_block = f"\n**Description**: {task['description']}\n" if task.get('description') else ''
         task_section = f"""## Current task
 - **ID**: `{task['id']}`
 - **Title**: {task['title']}
-
+{desc_block}{ac_block}
 ## Definition of Done
 - Implementation is complete and committed.
-- Tests written and passing.
+- Tests written and passing (BDD scenarios above must pass if acceptance_criteria is set).
 - `workflow_accept_task_result(task_id, summary, artifacts_changed, tests_run, test_results)` called with evidence.
 """
 

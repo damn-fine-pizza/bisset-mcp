@@ -19,7 +19,7 @@ Feature: Freeze Specification
     Given I have answered all interview questions
     When I freeze the specification
     Then the file "plan/workbreakdown.yaml" should exist
-    And it should contain 6 tasks
+    And it should contain the default tasks
 
   Scenario: Freeze transitions phase to execution
     Given I have answered all interview questions

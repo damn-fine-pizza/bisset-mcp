@@ -35,6 +35,7 @@ def _reconnect_client(db_path):
 @given('I have answered 3 interview questions', target_fixture='reload_state')
 def answered_3():
     client, storage, engine = _fresh_client()
+    client.post('/tools/workflow_new_session', json={'arguments': {'name': 'ReloadTest'}})
     client.post('/tools/workflow_start', json={'arguments': {'project_meta': {}}})
     for qid in ['q-001', 'q-002', 'q-003']:
         client.post('/tools/workflow_record_answer', json={
@@ -46,6 +47,7 @@ def answered_3():
 @given('the specification has been frozen', target_fixture='reload_state')
 def spec_frozen_for_reload():
     client, storage, engine = _fresh_client()
+    client.post('/tools/workflow_new_session', json={'arguments': {'name': 'ReloadTest'}})
     client.post('/tools/workflow_start', json={'arguments': {'project_meta': {}}})
     from orchestrator.workflow_server.catalog import QUESTIONS
     for qid, _ in QUESTIONS:
@@ -59,6 +61,11 @@ def spec_frozen_for_reload():
 @given(parsers.parse('I have accepted tasks "{t1}" and "{t2}"'))
 def pre_accept_two(reload_state):
     client = _reconnect_client(reload_state['db'])
+    # restore active session
+    sessions_r = client.post('/tools/workflow_list_sessions', json={'arguments': {}})
+    sessions = sessions_r.json().get('sessions', [])
+    if sessions:
+        client.post('/tools/workflow_switch_session', json={'arguments': {'session_id': sessions[0]['id']}})
     for tid in ['t-001', 't-002']:
         client.post('/tools/workflow_accept_task_result', json={'arguments': {
             'task_id': tid, 'summary': 'done',
@@ -69,7 +76,13 @@ def pre_accept_two(reload_state):
 @when('the workflow server is restarted', target_fixture='restarted_client')
 def restart_server(reload_state):
     # Simulate restart: create a new app instance pointing at the same DB (no delete)
-    return _reconnect_client(reload_state['db'])
+    client = _reconnect_client(reload_state['db'])
+    # restore active session (simulate client calling switch_session after restart)
+    sessions_r = client.post('/tools/workflow_list_sessions', json={'arguments': {}})
+    sessions = sessions_r.json().get('sessions', [])
+    if sessions:
+        client.post('/tools/workflow_switch_session', json={'arguments': {'session_id': sessions[0]['id']}})
+    return client
 
 
 @when('I request the next question', target_fixture='question_result')

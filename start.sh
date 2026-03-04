@@ -25,6 +25,9 @@ LLM_MODEL="${LLM_MODEL:-gpt-4o-mini}"
 ORCHESTRATOR_PORT="${ORCHESTRATOR_PORT:-8080}"
 PYTHON="$HOME/.pyenv/versions/bisset-mcp/bin/python"
 
+# Ensure behave + coverage are installed in the virtualenv
+"$PYTHON" -m pip install -q behave coverage 2>/dev/null || true
+
 # ── agent port map ────────────────────────────────────────────────────────────
 declare -A AGENT_PORTS=(
   [sw-architect]=8101
@@ -62,6 +65,20 @@ stop_service() {
 }
 
 # ── start functions ───────────────────────────────────────────────────────────
+start_workflow_server() {
+  local name="workflow-server"
+  if is_running "$name"; then echo "  $name already running" ; return; fi
+  local dir="$ROOT/orchestrator"
+
+  echo "  installing deps for $name..."
+  (cd "$dir" && "$PYTHON" -m pip install -q -r workflow_server/requirements.txt)
+  echo "  starting $name on :8765 → $(logfile "$name")"
+  setsid env \
+    sh -c "cd '$dir' && '$PYTHON' -m orchestrator.workflow_server" > "$(logfile "$name")" 2>&1 < /dev/null &
+  echo $! > "$(pidfile "$name")"
+  echo "  $name started (pid $!)"
+}
+
 start_orchestrator() {
   local name="orchestrator"
   if is_running "$name"; then echo "  $name already running" ; return; fi
@@ -81,6 +98,7 @@ start_orchestrator() {
   echo "  starting $name → $(logfile "$name")"
   setsid env \
     MCP_URL="http://localhost:8080" \
+    BISSET_PYTHON="$PYTHON" \
     $agent_env \
     sh -c "cd '$dir' && '$PYTHON' app.py" > "$(logfile "$name")" 2>&1 < /dev/null &
   echo $! > "$(pidfile "$name")"
@@ -112,6 +130,7 @@ cmd_start() {
   local target="${1:-all}"
   echo "==> start [$target]"
   if [[ "$target" == "all" ]]; then
+    start_workflow_server
     start_orchestrator
     for a in "${!AGENT_PORTS[@]}"; do start_agent "$a"; done
   elif [[ "$target" == "orchestrator" ]]; then
@@ -128,6 +147,7 @@ cmd_stop() {
   local target="${1:-all}"
   echo "==> stop [$target]"
   if [[ "$target" == "all" ]]; then
+    stop_service "workflow-server"
     for svc in orchestrator; do stop_service "$svc"; done
     for a in "${!AGENT_PORTS[@]}"; do stop_service "agent-$a"; done
   elif [[ "$target" == "mcp-context" ]]; then
@@ -139,7 +159,7 @@ cmd_stop() {
 
 cmd_status() {
   echo "==> status"
-  for svc in orchestrator; do
+  for svc in workflow-server orchestrator; do
     local pf
     pf="$(pidfile "$svc")"
     if is_running "$svc"; then

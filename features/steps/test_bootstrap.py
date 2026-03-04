@@ -12,12 +12,14 @@ def wf_running(workflow_client):
 
 @given(parsers.parse('I start a new workflow for project "{name}"'))
 def start_workflow_given(workflow_client, name):
+    workflow_client.post('/tools/workflow_new_session', json={'arguments': {'name': name}})
     r = workflow_client.post('/tools/workflow_start', json={'arguments': {'project_meta': {'name': name}}})
     assert r.status_code == 200
 
 
 @when(parsers.parse('I start a new workflow for project "{name}"'))
 def start_workflow_when(workflow_client, name):
+    workflow_client.post('/tools/workflow_new_session', json={'arguments': {'name': name}})
     r = workflow_client.post('/tools/workflow_start', json={'arguments': {'project_meta': {'name': name}}})
     assert r.status_code == 200
 

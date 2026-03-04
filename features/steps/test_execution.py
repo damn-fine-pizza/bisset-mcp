@@ -64,7 +64,7 @@ def evidence_stored(workflow_client, tid, accept_result):
     assert evidence.get('summary') is not None
 
 
-@when('I accept all 6 tasks')
+@when('I accept all default tasks')
 def accept_all(workflow_client):
     for tid, _ in PLAN_TASKS:
         workflow_client.post('/tools/workflow_accept_task_result', json={'arguments': {

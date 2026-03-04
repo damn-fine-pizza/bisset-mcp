@@ -95,6 +95,18 @@ def resource_plan() -> str:
 # ─── Tools (all proxied to workflow_server) ───────────────────────────────────
 
 @mcp.tool()
+def workflow_new_session(name: str = '') -> dict:
+    """Create a new Bisset project session. Returns a session_id. Must be called before workflow_start."""
+    return client.call_tool('workflow_new_session', {'name': name})
+
+
+@mcp.tool()
+def workflow_switch_session(session_id: str) -> dict:
+    """Switch to an existing Bisset session by its session_id."""
+    return client.call_tool('workflow_switch_session', {'session_id': session_id})
+
+
+@mcp.tool()
 def workflow_start(project_meta: dict) -> dict:
     """Start a new workflow and seed the question catalog."""
     return client.call_tool('workflow_start', {'project_meta': project_meta})
@@ -158,6 +170,37 @@ def workflow_report() -> dict:
 def workflow_is_done() -> dict:
     """Return done:true when all tasks are complete."""
     return client.call_tool('workflow_is_done', {})
+
+
+@mcp.tool()
+def workflow_list_sessions() -> dict:
+    """List all sessions (id, name, created_at, updated_at) — read-only."""
+    return client.call_tool('workflow_list_sessions', {})
+
+
+@mcp.tool()
+def workflow_list_tasks(status: str = None) -> dict:
+    """List all tasks with their status. Optional status filter: 'pending' or 'done'."""
+    return client.call_tool('workflow_list_tasks', {'status': status})
+
+
+@mcp.tool()
+def workflow_list_questions(answered: bool = None) -> dict:
+    """List all questions with answers. Optional filter: True=answered only, False=unanswered only."""
+    return client.call_tool('workflow_list_questions', {'answered': answered})
+
+
+@mcp.tool()
+def workflow_add_task(task_id: str, title: str, description: str = '', acceptance_criteria: str = '') -> dict:
+    """Add a project-specific task with optional Gherkin acceptance criteria.
+    Call this after workflow_freeze_spec to replace or augment generic tasks with tasks
+    tailored to the actual project. acceptance_criteria should be Gherkin Given/When/Then text."""
+    return client.call_tool('workflow_add_task', {
+        'task_id': task_id,
+        'title': title,
+        'description': description,
+        'acceptance_criteria': acceptance_criteria,
+    })
 
 
 def main():

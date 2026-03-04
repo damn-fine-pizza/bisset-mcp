@@ -3,7 +3,7 @@ Feature: Execution Loop
   I want to execute tasks one at a time with evidence
   So that the project is built incrementally and traceably
 
-  Scenario: First task returned is always t-001
+  Scenario: First task returned is the first default task
     Given the specification has been frozen
     When I request the next task
     Then the task id should be "t-001"
@@ -22,7 +22,7 @@ Feature: Execution Loop
 
   Scenario: Completing all tasks marks workflow as done
     Given the specification has been frozen
-    When I accept all 6 tasks
+    When I accept all default tasks
     Then the workflow should be done
 
   Scenario: Next task in done phase returns done signal
