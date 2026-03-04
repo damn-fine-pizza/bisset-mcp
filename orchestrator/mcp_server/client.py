@@ -20,8 +20,7 @@ def get_resource(name: str) -> str:
 
 
 def get_prompt(name: str) -> str:
-    safe = name.replace('/', '-')
-    resp = _client.get(f'/prompts/{safe}')
+    resp = _client.get(f'/prompts/{name}')
     resp.raise_for_status()
     return resp.json()['content']
 

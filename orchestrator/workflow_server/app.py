@@ -22,7 +22,6 @@ logger = logging.getLogger('workflow-server')
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'workflow.db')
 RESOURCES_DIR = os.path.join(os.path.dirname(__file__), 'resources')
-PROMPTS_DIR = os.path.join(os.path.dirname(__file__), '..', 'mcp_server', 'prompts')
 
 app = FastAPI(title='Workflow Server', version='1.0.0')
 
@@ -117,13 +116,148 @@ def get_resource(name: str):
         return {'name': name, 'content': f.read()}
 
 
-# ─── Prompts ─────────────────────────────────────────────────────────────────
+# ─── Prompts (dynamic — composed from live DB state) ─────────────────────────
 
 @app.get('/prompts/{name:path}')
-def get_prompt(name: str, **kwargs):
-    safe = name.replace('/', os.sep)
-    path = os.path.join(PROMPTS_DIR, f'{safe.replace(os.sep, "-")}.md')
-    if not os.path.exists(path):
+def get_prompt(name: str):
+    content = _build_prompt(name)
+    if content is None:
         raise HTTPException(404, f'prompt {name!r} not found')
-    with open(path) as f:
-        return {'name': name, 'content': f.read()}
+    return {'name': name, 'content': content}
+
+
+def _build_prompt(name: str) -> str | None:
+    answers = {row[0]: (row[1], row[2]) for row in _storage.get_all_answers()}  # qid -> (text, answer)
+    meta = _storage.read_meta('project_meta') or {}
+    phase = _storage.read_meta('phase') or 'interview'
+    project_name = (answers.get('q-001', (None, meta.get('name', 'unknown')))[1]) or meta.get('name', 'unknown')
+
+    if name == 'phases/requirements_interview':
+        return _prompt_requirements_interview(answers, phase)
+    if name == 'phases/design_review':
+        return _prompt_design_review(answers, project_name)
+    if name == 'phases/implementation_loop':
+        return _prompt_implementation_loop(answers, project_name, phase)
+    if name == 'roles/architect':
+        return _prompt_role('Architect', project_name, answers, phase,
+            'Design system architecture, make technology decisions, write ADRs.')
+    if name == 'roles/product_owner':
+        return _prompt_role('Product Owner', project_name, answers, phase,
+            'Prioritise features, clarify requirements, validate that the spec matches user needs.')
+    if name == 'roles/tech_lead':
+        return _prompt_role('Tech Lead', project_name, answers, phase,
+            'Guide implementation, review code quality, ensure tests pass and CI is green.')
+    if name == 'roles/test_engineer':
+        return _prompt_role('Test Engineer', project_name, answers, phase,
+            'Write and run tests, report coverage, validate acceptance criteria.')
+    if name == 'roles/build_engineer':
+        return _prompt_role('Build Engineer', project_name, answers, phase,
+            'Maintain CI/CD pipelines, Docker/deployment manifests, dependency management.')
+    return None
+
+
+def _qa_block(answers: dict) -> str:
+    lines = []
+    for qid, (text, answer) in sorted(answers.items()):
+        status = answer if answer else '_UNANSWERED_'
+        lines.append(f'- **{qid}** {text}\n  → {status}')
+    return '\n'.join(lines) if lines else '_(no answers yet)_'
+
+
+def _prompt_requirements_interview(answers: dict, phase: str) -> str:
+    answered = {k: v for k, v in answers.items() if v[1]}
+    unanswered = {k: v for k, v in answers.items() if not v[1]}
+    return f"""# Requirements Interview
+
+You are conducting a structured requirements interview.
+
+## Your job
+1. Call `workflow_next_question()` to get the next question.
+2. Present the question clearly to the user.
+3. Call `workflow_record_answer(question_id, answer_text)` with their response.
+4. Repeat until `next_question` returns `{{"done": true}}`.
+5. Then call `workflow_freeze_spec()` to lock the spec and move to execution.
+
+## Current state
+- Phase: **{phase}**
+- Questions answered: **{len(answered)}/{len(answers)}**
+
+## Answered so far
+{_qa_block(answered) if answered else '_(none yet)_'}
+
+## Still pending
+{chr(10).join(f'- {qid}: {text}' for qid, (text, _) in sorted(unanswered.items())) if unanswered else '✅ All answered — call `workflow_freeze_spec()` now.'}
+"""
+
+
+def _prompt_design_review(answers: dict, project_name: str) -> str:
+    return f"""# Design Review — {project_name}
+
+You are reviewing the project specification after the requirements interview.
+
+## Your job
+- Identify gaps, contradictions, or risky assumptions in the spec.
+- Propose ADR entries for major architectural decisions.
+- Confirm the work breakdown is complete and correctly sequenced.
+- If changes are needed, call `workflow_record_answer()` to update answers, then call `workflow_freeze_spec()` again.
+
+## Full specification
+{_qa_block(answers)}
+"""
+
+
+def _prompt_implementation_loop(answers: dict, project_name: str, phase: str) -> str:
+    task = _engine.next_task()
+    tasks = _storage.list_tasks()
+    done_count = sum(1 for t in tasks if t[2] == 'done')
+    total = len(tasks)
+
+    task_section = ''
+    if task.get('done'):
+        task_section = '✅ **All tasks complete.** Call `workflow_is_done()` to confirm.'
+    elif task.get('error'):
+        task_section = f'⚠️ {task["error"]}'
+    else:
+        task_section = f"""## Current task
+- **ID**: `{task['id']}`
+- **Title**: {task['title']}
+
+## Definition of Done
+- Implementation is complete and committed.
+- Tests written and passing.
+- `workflow_accept_task_result(task_id, summary, artifacts_changed, tests_run, test_results)` called with evidence.
+"""
+
+    return f"""# Implementation Loop — {project_name}
+
+You are implementing the project task by task.
+
+## Your job
+1. Call `workflow_next_task()` to get the current task.
+2. Implement it fully (write code, tests, docs as needed).
+3. Call `workflow_accept_task_result(task_id, summary, artifacts_changed, tests_run, test_results)`.
+4. Repeat until `workflow_is_done()` returns `{{"done": true}}`.
+
+## Progress
+- Phase: **{phase}**
+- Tasks done: **{done_count}/{total}**
+
+{task_section}
+
+## Project context
+{_qa_block(answers)}
+"""
+
+
+def _prompt_role(role: str, project_name: str, answers: dict, phase: str, responsibility: str) -> str:
+    return f"""# Role: {role} — {project_name}
+
+## Responsibility
+{responsibility}
+
+## Current state
+- Phase: **{phase}**
+
+## Project context
+{_qa_block(answers)}
+"""
