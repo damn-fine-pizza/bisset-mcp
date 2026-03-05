@@ -35,6 +35,11 @@ BDD-gated task list ready for implementation.
 
 ### Step 2: invoke the three specialists
 
+> ⚠️ **Sequential execution**: Copilot CLI does not support parallel sub-agent calls.
+> The three specialists run one after the other, making Phase 3 approximately 3× longer
+> than other phases. If speed is critical, a human operator can run each specialist in a
+> separate session manually and provide the proposals directly.
+
 Invoke all three in sequence (they are pure-output agents — no side effects):
 
 ```

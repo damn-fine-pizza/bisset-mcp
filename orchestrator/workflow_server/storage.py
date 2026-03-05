@@ -4,6 +4,8 @@ import os
 import time
 import uuid
 
+SCHEMA_VERSION = 5
+
 
 class Storage:
     def __init__(self, db_path):
@@ -15,61 +17,90 @@ class Storage:
 
     # ── schema ────────────────────────────────────────────────────────────────
 
+    def _current_version(self, cur) -> int:
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")
+        if not cur.fetchone():
+            return 0
+        cur.execute('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+    def _set_version(self, cur, version: int):
+        cur.execute('DELETE FROM schema_version')
+        cur.execute('INSERT INTO schema_version (version) VALUES (?)', (version,))
+
     def _migrate(self):
         cur = self.conn.cursor()
-        # sessions table: one row per project/sprint
-        cur.execute('''CREATE TABLE IF NOT EXISTS sessions (
-            id TEXT PRIMARY KEY,
-            name TEXT,
-            created_at REAL,
-            updated_at REAL
-        )''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS questions (
-            id TEXT, session_id TEXT,
-            text TEXT, answer TEXT, answered_at REAL,
-            PRIMARY KEY (id, session_id)
-        )''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS tasks (
-            id TEXT, session_id TEXT,
-            title TEXT, status TEXT, created_at REAL, done_at REAL, evidence TEXT,
-            description TEXT, acceptance_criteria TEXT, negative_acceptance_criteria TEXT,
-            PRIMARY KEY (id, session_id)
-        )''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS task_test_runs (
-            id TEXT PRIMARY KEY,
-            task_id TEXT,
-            session_id TEXT,
-            run_at REAL,
-            passed INTEGER,
-            failed INTEGER,
-            total INTEGER,
-            coverage_pct REAL,
-            line_coverage_pct REAL,
-            ok INTEGER,
-            runner_output TEXT
-        )''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS architecture_proposals (
-            id TEXT PRIMARY KEY,
-            session_id TEXT,
-            paradigm TEXT,
-            content TEXT,
-            created_at REAL
-        )''')
-        # migrate existing DBs that lack the new columns
-        for col in ('description', 'acceptance_criteria', 'negative_acceptance_criteria'):
+        cur.execute('CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)')
+        version = self._current_version(cur)
+
+        if version < 1:
+            cur.execute('''CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                created_at REAL,
+                updated_at REAL
+            )''')
+            cur.execute('''CREATE TABLE IF NOT EXISTS questions (
+                id TEXT, session_id TEXT,
+                text TEXT, answer TEXT, answered_at REAL,
+                PRIMARY KEY (id, session_id)
+            )''')
+            cur.execute('''CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT, session_id TEXT,
+                title TEXT, status TEXT, created_at REAL, done_at REAL, evidence TEXT,
+                PRIMARY KEY (id, session_id)
+            )''')
+            cur.execute('''CREATE TABLE IF NOT EXISTS task_test_runs (
+                id TEXT PRIMARY KEY,
+                task_id TEXT, session_id TEXT,
+                run_at REAL, passed INTEGER, failed INTEGER, total INTEGER,
+                coverage_pct REAL, ok INTEGER, runner_output TEXT
+            )''')
+            cur.execute('''CREATE TABLE IF NOT EXISTS meta (
+                k TEXT, session_id TEXT, v TEXT,
+                PRIMARY KEY (k, session_id)
+            )''')
+            self._set_version(cur, 1)
+
+        if version < 2:
+            # add task detail columns
+            for col in ('description TEXT', 'acceptance_criteria TEXT', 'negative_acceptance_criteria TEXT'):
+                try:
+                    cur.execute(f'ALTER TABLE tasks ADD COLUMN {col}')
+                except Exception:
+                    pass
+            self._set_version(cur, 2)
+
+        if version < 3:
+            # add line coverage to test runs
             try:
-                cur.execute(f'ALTER TABLE tasks ADD COLUMN {col} TEXT')
+                cur.execute('ALTER TABLE task_test_runs ADD COLUMN line_coverage_pct REAL')
             except Exception:
                 pass
-        try:
-            cur.execute('ALTER TABLE task_test_runs ADD COLUMN line_coverage_pct REAL')
-        except Exception:
-            pass
-        cur.execute('''CREATE TABLE IF NOT EXISTS meta (
-            k TEXT, session_id TEXT, v TEXT,
-            PRIMARY KEY (k, session_id)
-        )''')
+            self._set_version(cur, 3)
+
+        if version < 4:
+            # architecture proposals table
+            cur.execute('''CREATE TABLE IF NOT EXISTS architecture_proposals (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                paradigm TEXT,
+                content TEXT,
+                created_at REAL
+            )''')
+            self._set_version(cur, 4)
+
+        if version < 5:
+            # enforce UNIQUE on architecture_proposals (paradigm, session_id) via index
+            try:
+                cur.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_session_paradigm ON architecture_proposals (session_id, paradigm)')
+            except Exception:
+                pass
+            self._set_version(cur, 5)
+
         self.conn.commit()
+
 
     # ── session management ────────────────────────────────────────────────────
 

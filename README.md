@@ -61,6 +61,10 @@ Phase 2.5 → bisset-requirements validate completeness / consistency / testabil
               └─ requirements_incomplete → loop back to Phase 2
 Phase 3   → bisset-architect  evaluate OOP / Functional / Data-Oriented proposals
               ├─ bisset-architect-{oop,functional,dataoriented}  produce proposals
+              │    ⚠️  these 3 sub-agents run sequentially (Copilot CLI limitation — no
+              │        native parallelism). Phase 3 takes ~3× longer than other phases.
+              │        If time is critical, a human operator can run the three agents
+              │        manually in separate sessions and paste proposals into the chat.
               └─ bisset-requirements  cross-check architectural coverage
 Phase 4   → bisset-test-gherkin  generate {task}.feature + {task}.negative.feature
 Phase 5   → bisset-implement  implement task by task via domain specialists
@@ -76,7 +80,9 @@ Review    → bisset-review     conformance audit (any time)
 |---|---|---|---|---|
 | `bisset` | dispatcher | ✅ | — | agent, workflow_get_state |
 | `bisset-interview` | 2 | ❌ | bisset | workflow tools |
-| `bisset-requirements` | 2.5 / 3 / review | ❌ | bisset, bisset-architect, bisset-review | workflow_advance_phase, workflow_store_proposal |
+| `bisset-requirements` | 2.5 / 3 / review | ❌ | bisset, bisset-architect, bisset-review | agent |
+| `bisset-requirements-validate` | 2.5 | ❌ | bisset-requirements | workflow_advance_phase |
+| `bisset-requirements-extract` | review | ❌ | bisset-requirements | workflow_store_proposal |
 | `bisset-architect` | 3 | ❌ | bisset | agent, workflow_advance_phase, workflow_list_proposals |
 | `bisset-architect-oop` | 3 | ❌ | bisset-architect | workflow_store_proposal |
 | `bisset-architect-functional` | 3 | ❌ | bisset-architect | workflow_store_proposal |
