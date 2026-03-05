@@ -16,7 +16,10 @@ Feature: Backend Reload Without Data Loss
     And I request the next task
     Then the task id should be "t-003"
 
-  Scenario: Phase is correctly restored after restart
+  Scenario: Server auto-restores last session on startup
+    Given I have answered 3 interview questions
+    When the workflow server is restarted
+    Then recording a new answer should not crash
     Given the specification has been frozen
     When the workflow server is restarted
     Then the workflow phase should be "execution"

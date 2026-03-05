@@ -107,6 +107,15 @@ def t_id_after_reload(task_result, tid):
     assert task_result.get('id') == tid
 
 
+@then('recording a new answer should not crash')
+def answer_after_restart(restarted_client):
+    r = restarted_client.post('/tools/workflow_record_answer', json={
+        'arguments': {'question_id': 'q-004', 'answer_text': 'answer after restart'}
+    })
+    assert r.status_code == 200
+    assert 'error' not in r.json()
+
+
 @then(parsers.parse('the workflow phase should be "{phase}"'))
 def phase_after_reload(restarted_client, phase):
     r = restarted_client.post('/tools/workflow_get_state', json={'arguments': {}})
