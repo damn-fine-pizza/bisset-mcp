@@ -179,6 +179,35 @@ def tool_is_done(req: ToolRequest):
     return _engine.is_done()
 
 
+@app.post('/tools/workflow_status')
+def tool_status(req: ToolRequest):
+    return _engine.status()
+
+
+@app.post('/tools/workflow_bootstrap_project')
+def tool_bootstrap_project(req: ToolRequest):
+    a = req.arguments
+    return _engine.bootstrap_project(
+        cwd=a.get('cwd', ''),
+        autodetect=a.get('autodetect', True),
+    )
+
+
+@app.post('/tools/workflow_run_until_blocked')
+def tool_run_until_blocked(req: ToolRequest):
+    a = req.arguments
+    return _engine.run_until_blocked(
+        max_iterations=int(a.get('max_iterations', 20)),
+        max_minutes=float(a.get('max_minutes', 30.0)),
+    )
+
+
+@app.post('/tools/workflow_get_events')
+def tool_get_events(req: ToolRequest):
+    a = req.arguments
+    return _engine.get_events(limit=int(a.get('limit', 50)))
+
+
 # ─── Resources ───────────────────────────────────────────────────────────────
 
 RESOURCE_FILES = {

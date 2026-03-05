@@ -1,4 +1,18 @@
 #!/usr/bin/env node
+/**
+ * DEPRECATED — Node MCP server (mcp-server/index.js)
+ *
+ * The primary MCP server for Bisset is now the Python FastMCP server at:
+ *   orchestrator/mcp_server/server.py
+ *
+ * The Python server exposes all tools, resources, and prompts including
+ * the new autonomous orchestration tools:
+ *   workflow_run_until_blocked, workflow_status, workflow_bootstrap_project,
+ *   workflow_get_events
+ *
+ * This Node server is kept for backward compatibility only.
+ * It will be removed in a future release.
+ */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';

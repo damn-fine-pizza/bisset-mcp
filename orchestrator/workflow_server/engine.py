@@ -5,6 +5,7 @@ import subprocess
 import logging
 from .storage import Storage
 from .catalog import Catalog
+from .security import validate_path, validate_command, safe_split_args, SecurityError
 
 logger = logging.getLogger('workflow-engine')
 
@@ -234,11 +235,15 @@ class WorkflowEngine:
 
     def freeze_spec(self):
         meta = self.storage.read_meta('project_meta') or {}
-        if not meta.get('project_path'):
+        project_path = meta.get('project_path', '')
+        if not project_path:
             return {
                 'error': 'project_path not set',
                 'fix': 'Call workflow_start again with project_path set to the absolute path of the project on disk. Example: workflow_start({"name": "...", "project_path": "/abs/path/to/project", "test_runner": "cargo test"})',
             }
+        # Security: ensure project_path is an absolute path (no traversal from cwd)
+        if not os.path.isabs(project_path):
+            return {'error': 'project_path must be an absolute path', 'fix': f'Set project_path to an absolute path, e.g. /home/user/myproject instead of {project_path!r}'}
         answers = self.storage.get_all_answers()
         spec_path = self.renderers.render_spec(answers)
         self.renderers.write_adr_stub('Initial decisions')
@@ -354,28 +359,55 @@ class WorkflowEngine:
         feature_path = self._feature_file_path(task_id)
         if not feature_path or not os.path.exists(feature_path):
             return {'error': f'Feature file not found: {feature_path}'}
+        # Security: validate paths
+        try:
+            validate_path(cfg['project_path'], feature_path)
+        except SecurityError as e:
+            return {'error': f'Security: {e}'}
         cmd = [cfg['test_runner']]
         if cfg['test_runner_args']:
-            cmd += cfg['test_runner_args'].split()
+            cmd += safe_split_args(cfg['test_runner_args'])
         cmd.append(feature_path)
         # include negative feature file if it exists
         neg_path = self._feature_file_path(task_id, negative=True)
         if neg_path and os.path.exists(neg_path):
             cmd.append(neg_path)
             logger.info('run_tests including negative feature file %s', neg_path)
+        # Security: validate command
+        try:
+            validate_command(cmd)
+        except SecurityError as e:
+            return {'error': f'Security: {e}'}
         # wrap with coverage.py if requested
         if cfg['use_line_coverage']:
             cmd = ['coverage', 'run', '--branch', '-m'] + cmd
         logger.info('run_tests tid=%s cmd=%r', task_id, cmd)
+        # Prepare log directory
+        runs_dir = os.path.join(cfg['project_path'], 'runs', self._session_id)
+        os.makedirs(runs_dir, exist_ok=True)
+        log_filename = f'{task_id}-{int(time.time())}.log'
+        log_path = os.path.join(runs_dir, log_filename)
+        start_ms = time.time() * 1000
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
                                     cwd=cfg['project_path'])
             output = result.stdout + result.stderr
+            returncode = result.returncode
         except FileNotFoundError:
             return {'error': f'Test runner {cfg["test_runner"]!r} not found — is it installed?'}
         except subprocess.TimeoutExpired:
             return {'error': 'Test run timed out after 300s'}
+        duration_ms = round(time.time() * 1000 - start_ms, 1)
+        # Save full log to disk
+        try:
+            with open(log_path, 'w') as lf:
+                lf.write(output)
+        except OSError:
+            log_path = None
         passed, failed = _parse_bdd_output(output)
+        # returncode != 0 is always a failure, even if output parsing is ambiguous
+        if returncode != 0 and passed == 0 and failed == 0:
+            failed = 1  # guarantee failure signal
         total = passed + failed
         coverage_pct = (passed / total * 100) if total > 0 else 0.0
         threshold = cfg['bdd_coverage_threshold']
@@ -398,21 +430,24 @@ class WorkflowEngine:
             except subprocess.TimeoutExpired:
                 logger.warning('run_tests: coverage report timed out')
         line_threshold = cfg['line_coverage_threshold']
-        ok = coverage_pct >= threshold and (
+        ok = returncode == 0 and coverage_pct >= threshold and (
             not cfg['use_line_coverage'] or line_coverage_pct is None or line_coverage_pct >= line_threshold
         )
         run_id = self.storage.save_test_run(task_id, passed, failed, coverage_pct, ok, output[-4000:], line_coverage_pct)
-        logger.info('run_tests tid=%s passed=%d failed=%d coverage=%.1f%% line_cov=%s ok=%s run_id=%s',
-                    task_id, passed, failed, coverage_pct, line_coverage_pct, ok, run_id)
+        logger.info('run_tests tid=%s passed=%d failed=%d coverage=%.1f%% line_cov=%s ok=%s run_id=%s rc=%d duration_ms=%.0f',
+                    task_id, passed, failed, coverage_pct, line_coverage_pct, ok, run_id, returncode, duration_ms)
         result_dict = {
             'ok': ok,
+            'returncode': returncode,
+            'duration_ms': duration_ms,
             'task_id': task_id,
             'run_id': run_id,
-            'passed': passed,
-            'failed': failed,
+            'tests_passed': passed,
+            'tests_failed': failed,
             'total': total,
             'coverage_pct': round(coverage_pct, 1),
             'threshold': threshold,
+            'output_log_path': log_path,
             'output': output[-2000:],
         }
         if line_coverage_pct is not None:
@@ -429,3 +464,228 @@ class WorkflowEngine:
     def is_done(self):
         logger.debug('is_done phase=%s', self.phase)
         return {'done': self.phase == 'done'}
+
+    # ── status (rich introspection) ───────────────────────────────────────────
+
+    def status(self) -> dict:
+        """Return full workflow status in a single call — no extra round-trips needed."""
+        if not self._session_id:
+            return {'error': 'No active session'}
+        tasks = self.storage.list_tasks()
+        done_tasks = [t for t in tasks if t[2] == 'done']
+        pending_tasks = [t for t in tasks if t[2] == 'pending']
+        current_task = None
+        if pending_tasks:
+            t = pending_tasks[0]
+            current_task = {'id': t[0], 'title': t[1]}
+        sub_phase = self.storage.read_meta('sub_phase') or self.phase
+        # last test run
+        last_run = None
+        if current_task:
+            row = self.storage.get_last_passing_run(current_task['id'])
+            if row:
+                last_run = {'run_id': row[0], 'passed': row[1], 'failed': row[2],
+                            'coverage_pct': row[4], 'ok': bool(row[5])}
+        # last error from event log
+        events = self.storage.get_events(limit=10)
+        last_error = None
+        for ev in events:
+            if not ev['success'] or 'error' in ev.get('result', {}):
+                last_error = ev['result'].get('error') or 'unknown error'
+                break
+        result = {
+            'session_id': self._session_id,
+            'phase': self.phase,
+            'sub_phase': sub_phase,
+            'tasks_done': len(done_tasks),
+            'tasks_total': len(tasks),
+            'current_task': current_task,
+            'last_test_run': last_run,
+            'last_error': last_error,
+        }
+        logger.debug('status %r', result)
+        return result
+
+    # ── bootstrap project ────────────────────────────────────────────────────
+
+    def bootstrap_project(self, cwd: str, autodetect: bool = True) -> dict:
+        """
+        Detect project type from ``cwd`` and populate project_meta with
+        test_runner, features_dir, and project_path.
+        Can be called before workflow_start to pre-fill configuration.
+        """
+        if not cwd or not os.path.isdir(cwd):
+            return {'error': f'Directory not found: {cwd!r}'}
+        cwd = os.path.abspath(cwd)
+        detected = {'project_path': cwd}
+        if autodetect:
+            # Detect test runner
+            if os.path.exists(os.path.join(cwd, 'Cargo.toml')):
+                detected['test_runner'] = 'cargo'
+                detected['test_runner_args'] = 'test --workspace'
+                detected['project_type'] = 'rust'
+            elif os.path.exists(os.path.join(cwd, 'pyproject.toml')) or os.path.exists(os.path.join(cwd, 'requirements.txt')):
+                # prefer behave if features/ exists, else pytest
+                if os.path.isdir(os.path.join(cwd, 'features')):
+                    detected['test_runner'] = 'behave'
+                    detected['project_type'] = 'python-bdd'
+                else:
+                    detected['test_runner'] = 'pytest'
+                    detected['project_type'] = 'python'
+            elif os.path.exists(os.path.join(cwd, 'package.json')):
+                # detect cucumber-js vs jest
+                pkg = {}
+                try:
+                    import json
+                    with open(os.path.join(cwd, 'package.json')) as f:
+                        pkg = json.load(f)
+                except Exception:
+                    pass
+                deps = {**pkg.get('dependencies', {}), **pkg.get('devDependencies', {})}
+                if '@cucumber/cucumber' in deps or 'cucumber' in deps:
+                    detected['test_runner'] = 'npx'
+                    detected['test_runner_args'] = 'cucumber-js'
+                    detected['project_type'] = 'node-cucumber'
+                else:
+                    detected['test_runner'] = 'npx'
+                    detected['test_runner_args'] = 'jest'
+                    detected['project_type'] = 'node-jest'
+            elif os.path.exists(os.path.join(cwd, 'go.mod')):
+                detected['test_runner'] = 'go'
+                detected['test_runner_args'] = 'test ./...'
+                detected['project_type'] = 'go'
+            elif os.path.exists(os.path.join(cwd, 'pom.xml')) or os.path.exists(os.path.join(cwd, 'build.gradle')):
+                detected['test_runner'] = 'mvn' if os.path.exists(os.path.join(cwd, 'pom.xml')) else 'gradle'
+                detected['test_runner_args'] = 'test' if detected.get('test_runner') == 'gradle' else 'verify'
+                detected['project_type'] = 'java'
+            # Detect features dir
+            for candidate in ('features', 'tests/features', 'test/features', 'e2e'):
+                if os.path.isdir(os.path.join(cwd, candidate)):
+                    detected['features_dir'] = candidate
+                    break
+            if 'features_dir' not in detected:
+                detected['features_dir'] = 'features'
+        # Merge into project_meta if session is active
+        if self._session_id:
+            existing = self.storage.read_meta('project_meta') or {}
+            # Only fill fields not already set
+            for k, v in detected.items():
+                if not existing.get(k):
+                    existing[k] = v
+            self.storage.write_meta('project_meta', existing)
+            logger.info('bootstrap_project cwd=%s detected=%r', cwd, detected)
+            return {'status': 'ok', 'detected': detected, 'merged_into_session': True}
+        logger.info('bootstrap_project cwd=%s detected=%r (no session)', cwd, detected)
+        return {'status': 'ok', 'detected': detected, 'merged_into_session': False,
+                'next_step': 'Call workflow_new_session then workflow_start with this detected config'}
+
+    # ── macro orchestration loop ──────────────────────────────────────────────
+
+    def run_until_blocked(self, max_iterations: int = 20, max_minutes: float = 30.0) -> dict:
+        """
+        Execute the implementation loop autonomously until blocked, done, or budget exhausted.
+
+        Each iteration:
+          1. Get next pending task
+          2. Run tests
+          3. If tests pass → accept task
+          4. If tests fail → return blocked so the LLM can fix the code and retry
+
+        Returns a status dict describing why the loop stopped.
+        """
+        if not self._session_id:
+            return {'error': 'No active session'}
+        if self.phase not in ('execution', 'done'):
+            return {'error': f'Cannot run loop in phase {self.phase!r} — must be in execution phase'}
+        deadline = time.time() + max_minutes * 60
+        iteration = 0
+        tasks_accepted = []
+        last_error = None
+        while iteration < max_iterations:
+            if time.time() > deadline:
+                return {
+                    'status': 'timeout',
+                    'reason': f'Exceeded max_minutes={max_minutes}',
+                    'iterations': iteration,
+                    'tasks_accepted': tasks_accepted,
+                    'last_error': last_error,
+                }
+            # Check if done
+            if self.phase == 'done' or self.storage.all_tasks_done():
+                self.phase = 'done'
+                self.storage.write_meta('phase', 'done')
+                return {
+                    'status': 'done',
+                    'iterations': iteration,
+                    'tasks_accepted': tasks_accepted,
+                }
+            # Get next task
+            task = self.next_task()
+            if task.get('done'):
+                return {
+                    'status': 'done',
+                    'iterations': iteration,
+                    'tasks_accepted': tasks_accepted,
+                }
+            if 'error' in task:
+                return {
+                    'status': 'blocked',
+                    'reason': task['error'],
+                    'iterations': iteration,
+                    'tasks_accepted': tasks_accepted,
+                    'last_error': task['error'],
+                }
+            task_id = task['id']
+            logger.info('run_until_blocked iter=%d task=%s', iteration, task_id)
+            # Run tests
+            test_result = self.run_tests(task_id)
+            iteration += 1
+            if 'error' in test_result:
+                last_error = test_result['error']
+                return {
+                    'status': 'blocked',
+                    'reason': f'test runner error on task {task_id}: {last_error}',
+                    'iterations': iteration,
+                    'tasks_accepted': tasks_accepted,
+                    'last_error': last_error,
+                    'blocked_task': task_id,
+                    'fix': 'Ensure test_runner is installed and feature files exist, then call workflow_run_until_blocked again.',
+                }
+            if not test_result.get('ok'):
+                last_error = f"Tests failed for {task_id}: {test_result.get('tests_failed',0)} failed, coverage {test_result.get('coverage_pct',0):.1f}%"
+                return {
+                    'status': 'blocked',
+                    'reason': last_error,
+                    'iterations': iteration,
+                    'tasks_accepted': tasks_accepted,
+                    'last_error': last_error,
+                    'blocked_task': task_id,
+                    'test_result': test_result,
+                    'fix': f'Fix the failing tests/code for task {task_id}, then call workflow_run_until_blocked again.',
+                }
+            # Accept task
+            accept = self.accept_task_result(
+                task_id=task_id,
+                summary=f'Auto-accepted after passing tests (run {test_result["run_id"]})',
+                artifacts_changed=[],
+                tests_run=[test_result['run_id']],
+                test_results={'passed': test_result['tests_passed'], 'failed': test_result['tests_failed']},
+            )
+            tasks_accepted.append(task_id)
+            logger.info('run_until_blocked accepted task=%s', task_id)
+        return {
+            'status': 'iteration_limit',
+            'reason': f'Reached max_iterations={max_iterations}',
+            'iterations': iteration,
+            'tasks_accepted': tasks_accepted,
+            'last_error': last_error,
+            'fix': 'Increase max_iterations or call workflow_run_until_blocked again to continue.',
+        }
+
+    # ── event log proxy ──────────────────────────────────────────────────────
+
+    def get_events(self, limit: int = 50) -> dict:
+        if not self._session_id:
+            return {'error': 'No active session'}
+        events = self.storage.get_events(limit)
+        return {'events': events, 'count': len(events)}

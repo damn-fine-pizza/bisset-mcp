@@ -247,6 +247,53 @@ def workflow_list_proposals() -> dict:
     return client.call_tool('workflow_list_proposals', {})
 
 
+@mcp.tool()
+def workflow_status() -> dict:
+    """Return a comprehensive status snapshot of the current workflow session in a single call.
+    Returns: session_id, phase, sub_phase, tasks_done, tasks_total, current_task,
+    last_test_run, last_error. Use this instead of chaining workflow_get_state +
+    workflow_list_tasks + workflow_report when you need the full picture."""
+    return client.call_tool('workflow_status', {})
+
+
+@mcp.tool()
+def workflow_bootstrap_project(cwd: str, autodetect: bool = True) -> dict:
+    """Auto-detect project type from a directory and populate project_meta.
+    Detects: Cargo.toml (Rust), pyproject.toml (Python), package.json (Node),
+    go.mod (Go), pom.xml/build.gradle (Java).
+    Sets: project_path, test_runner, test_runner_args, features_dir.
+    Call this BEFORE workflow_start to pre-fill configuration automatically.
+    cwd: absolute path to the project root directory.
+    autodetect: if true (default), detect project type from files present."""
+    return client.call_tool('workflow_bootstrap_project', {'cwd': cwd, 'autodetect': autodetect})
+
+
+@mcp.tool()
+def workflow_run_until_blocked(max_iterations: int = 20, max_minutes: float = 30.0) -> dict:
+    """Execute the implementation loop autonomously until blocked, done, or budget exhausted.
+    Each iteration: get next task → run tests → accept if passing → repeat.
+    Stops and returns when: all tasks are done, a test fails (LLM must fix and retry),
+    a config error occurs, or the iteration/time budget is reached.
+    Returns: {status, reason, iterations, tasks_accepted, blocked_task, test_result, fix}.
+    status values: 'done' | 'blocked' | 'timeout' | 'iteration_limit'
+    When status='blocked', read 'fix' for the autonomous recovery action.
+    max_iterations: max task iterations (default 20).
+    max_minutes: wall-clock budget in minutes (default 30)."""
+    return client.call_tool('workflow_run_until_blocked', {
+        'max_iterations': max_iterations,
+        'max_minutes': max_minutes,
+    })
+
+
+@mcp.tool()
+def workflow_get_events(limit: int = 50) -> dict:
+    """Return the most recent tool invocation events for the active session.
+    Useful for debugging, auditing, and recovering after a crash.
+    Each event contains: tool, args, result, timestamp, success, duration_ms.
+    limit: max events to return (default 50)."""
+    return client.call_tool('workflow_get_events', {'limit': limit})
+
+
 def main():
     if not client.health():
         logger.warning(

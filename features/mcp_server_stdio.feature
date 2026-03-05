@@ -9,7 +9,7 @@ Feature: MCP Server STDIO Interface
     When the MCP client initialises the session
     Then the server should respond with its capabilities
 
-  Scenario: MCP server exposes all 19 tools
+  Scenario: MCP server exposes all 23 tools
     Given a connected MCP session on port 8766
     When I list the available tools
     Then the tools should include "workflow_start"
@@ -21,6 +21,10 @@ Feature: MCP Server STDIO Interface
     And the tools should include "workflow_list_proposals"
     And the tools should include "workflow_add_task"
     And the tools should include "workflow_run_tests"
+    And the tools should include "workflow_status"
+    And the tools should include "workflow_bootstrap_project"
+    And the tools should include "workflow_run_until_blocked"
+    And the tools should include "workflow_get_events"
 
   Scenario: MCP server exposes all 4 resources
     Given a connected MCP session on port 8766

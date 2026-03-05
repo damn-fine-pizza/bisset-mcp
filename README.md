@@ -197,11 +197,11 @@ Review    → bisset-review     conformance audit (any time)
 | `workflow_start` | Seed the question catalog and begin the interview |
 | `workflow_next_question` | Get the next unanswered question |
 | `workflow_record_answer` | Record an answer |
-| `workflow_freeze_spec` | Lock the spec and generate work breakdown |
+| `workflow_freeze_spec` | Lock the spec and generate work breakdown (blocks if `project_path` missing) |
 | `workflow_advance_phase` | Emit a signal to advance the workflow sub-phase |
 | `workflow_next_task` | Get the current pending task (with Gherkin criteria) |
 | `workflow_add_task` | Add a project-specific task with Gherkin acceptance criteria |
-| `workflow_run_tests` | **Bisset runs the BDD tests** — no self-reporting |
+| `workflow_run_tests` | **Bisset runs the BDD tests** — structured output: `returncode`, `duration_ms`, `tests_passed`, `tests_failed`, `output_log_path` |
 | `workflow_accept_task_result` | Mark a task done (gated on test results) |
 | `workflow_list_tasks` | List all tasks and their status |
 | `workflow_list_questions` | List all questions and answers |
@@ -210,6 +210,10 @@ Review    → bisset-review     conformance audit (any time)
 | `workflow_is_done` | Check if all tasks are complete |
 | `workflow_store_proposal` | Persist an architecture proposal for the session |
 | `workflow_list_proposals` | Retrieve stored architecture proposals |
+| `workflow_status` | **Rich introspection** — phase, sub_phase, current_task, tasks_done/total, last_error in one call |
+| `workflow_bootstrap_project` | **Auto-detect** project type from a directory — sets `test_runner`, `features_dir`, `project_path` |
+| `workflow_run_until_blocked` | **Autonomous loop** — runs the full implement→test→accept cycle until blocked, done, or budget exhausted |
+| `workflow_get_events` | Return the execution event log for debug, audit, and crash recovery |
 
 ## BDD enforcement
 
@@ -272,6 +276,33 @@ Pass these in `workflow_start` to enable BDD enforcement:
   "line_coverage_threshold": 80
 }
 ```
+
+**Tip:** Instead of filling this manually, call `workflow_bootstrap_project(cwd="/path/to/project")` first — it auto-detects the test runner and features directory.
+
+## Autonomous workflow (autopilot mode)
+
+Bisset supports fully autonomous operation via the `workflow_run_until_blocked` macro tool.
+The LLM triggers a single tool call; Bisset owns the inner loop.
+
+```
+workflow_bootstrap_project(cwd=".")
+workflow_new_session(name="MyProject")
+workflow_start(project_meta={...})              # interview questions answered by bisset-interview
+workflow_freeze_spec()                          # after all questions answered
+# ... requirements, architect, gherkin phases ...
+workflow_run_until_blocked(max_iterations=20)   # ← autonomous implementation loop
+```
+
+`workflow_run_until_blocked` returns one of:
+
+| `status` | Meaning | Next action |
+|---|---|---|
+| `done` | All tasks accepted | Done! Call `workflow_is_done()` |
+| `blocked` | Test failure or config error | Read `fix` field; fix the code; retry |
+| `timeout` | Wall-clock budget exceeded | Increase `max_minutes` or retry |
+| `iteration_limit` | Max iterations reached | Increase `max_iterations` or retry |
+
+For debugging any failure, call `workflow_get_events(limit=20)` to see a full audit trail of every tool invocation.
 
 ## Running tests
 

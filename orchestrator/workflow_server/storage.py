@@ -4,7 +4,7 @@ import os
 import time
 import uuid
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class Storage:
@@ -12,6 +12,9 @@ class Storage:
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        # WAL mode: improves concurrent read/write performance and crash safety
+        self.conn.execute('PRAGMA journal_mode=WAL')
+        self.conn.execute('PRAGMA synchronous=NORMAL')
         self._migrate()
         self._active_session_id = None  # set by caller
 
@@ -98,6 +101,22 @@ class Storage:
             except Exception:
                 pass
             self._set_version(cur, 5)
+
+        if version < 6:
+            # execution event log for debug / replay / recovery
+            cur.execute('''CREATE TABLE IF NOT EXISTS events (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                tool_name TEXT NOT NULL,
+                args_json TEXT,
+                result_json TEXT,
+                timestamp REAL NOT NULL,
+                success INTEGER NOT NULL DEFAULT 1,
+                duration_ms REAL
+            )''')
+            # index for efficient session-scoped queries
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_events_session ON events (session_id, timestamp)')
+            self._set_version(cur, 6)
 
         self.conn.commit()
 
@@ -284,3 +303,44 @@ class Storage:
             (self.sid,),
         )
         return cur.fetchall()
+
+    # ── event log ────────────────────────────────────────────────────────────
+
+    def log_event(self, tool_name: str, args: dict, result: dict,
+                  success: bool = True, duration_ms: float | None = None):
+        """Record a tool invocation for debug / replay purposes."""
+        event_id = str(uuid.uuid4())
+        sid = self._active_session_id  # may be None before session is created
+        self.conn.execute(
+            'INSERT INTO events (id, session_id, tool_name, args_json, result_json, timestamp, success, duration_ms) VALUES (?,?,?,?,?,?,?,?)',
+            (event_id, sid, tool_name, json.dumps(args), json.dumps(result),
+             time.time(), 1 if success else 0, duration_ms),
+        )
+        self.conn.commit()
+        return event_id
+
+    def get_events(self, limit: int = 50) -> list:
+        """Return the most recent ``limit`` events for the active session."""
+        cur = self.conn.cursor()
+        if self._active_session_id:
+            cur.execute(
+                'SELECT tool_name, args_json, result_json, timestamp, success, duration_ms FROM events WHERE session_id=? ORDER BY timestamp DESC LIMIT ?',
+                (self.sid, limit),
+            )
+        else:
+            cur.execute(
+                'SELECT tool_name, args_json, result_json, timestamp, success, duration_ms FROM events ORDER BY timestamp DESC LIMIT ?',
+                (limit,),
+            )
+        rows = cur.fetchall()
+        return [
+            {
+                'tool': r[0],
+                'args': json.loads(r[1]) if r[1] else {},
+                'result': json.loads(r[2]) if r[2] else {},
+                'timestamp': r[3],
+                'success': bool(r[4]),
+                'duration_ms': r[5],
+            }
+            for r in rows
+        ]
