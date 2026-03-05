@@ -80,12 +80,24 @@ workflow_accept_task_result(
 Call `workflow_report()` and show progress to the user.
 Move to the next task.
 
-## Completing the project
+## Completing the implementation
 
 When `workflow_is_done()` returns `done: true`:
 
-1. Call `workflow_report()` and display the final summary.
-2. Inform the user: "All tasks complete. The project is done."
+1. Call `workflow_report()` and display the implementation summary.
+2. Return control to **bisset** with signal: `implementation_complete`.
+   The dispatcher will invoke **bisset-test-gherkin** for the full coverage check (Phase 6).
+
+## Called back for coverage fixes (Phase 6 loop)
+
+If the dispatcher returns control here with signal `coverage_failed`:
+
+1. Read the coverage report provided — it lists which scenarios failed or were not covered.
+2. For each gap:
+   - If the scenario **fails**: fix the implementation code.
+   - If a scenario **is missing**: the code exists but is not exercised — add or extend tests.
+3. Re-run the full test suite via `execute` to confirm all task-level scenarios pass.
+4. Return control to **bisset** with signal: `implementation_complete`.
 
 ## Rules
 

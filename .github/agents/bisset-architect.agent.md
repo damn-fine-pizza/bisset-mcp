@@ -64,8 +64,8 @@ Rules:
 After injecting all tasks:
 
 1. Call `workflow_list_tasks()` and display the final list to the user.
-2. Ask: "Does this task list look correct? Shall we start implementation?"
-3. On confirmation, hand off to **bisset-implement**.
+2. Ask: "Does this task list look correct? Shall we generate the feature files?"
+3. On confirmation, return control to **bisset** with signal: `tasks_ready`.
 
 ## Rules
 
