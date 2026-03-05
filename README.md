@@ -50,6 +50,8 @@ flowchart TD
     bim --> bdb[bisset-database]
     bim --> bcloud[bisset-cloud]
     bim --> bdevops[bisset-devops]
+    bim --> bdocs[bisset-docs]
+    bdocs --> bux
 ```
 
 ### Phase sequence
@@ -68,6 +70,9 @@ Phase 3   → bisset-architect  evaluate OOP / Functional / Data-Oriented propos
               └─ bisset-requirements  cross-check architectural coverage
 Phase 4   → bisset-test-gherkin  generate {task}.feature + {task}.negative.feature
 Phase 5   → bisset-implement  implement task by task via domain specialists
+              ├─ bisset-{backend,frontend,embedded,ux,database,cloud,devops}
+              └─ bisset-docs  update README, API ref, flows, architecture docs
+                   └─ bisset-ux  document user flows and interaction specs
 Phase 6   → bisset-test-gherkin  run full BDD suite, gate on > 80% coverage
               └─ coverage_failed → loop back to Phase 5
 Review    → bisset-review     conformance audit (any time)
@@ -92,7 +97,8 @@ Review    → bisset-review     conformance audit (any time)
 | `bisset-backend` | 5 | ❌ | bisset-implement | read, edit, execute |
 | `bisset-frontend` | 5 | ❌ | bisset-implement | read, edit, execute |
 | `bisset-embedded` | 5 | ❌ | bisset-implement | read, edit, execute |
-| `bisset-ux` | 5 | ❌ | bisset-implement | read, edit |
+| `bisset-ux` | 5 | ❌ | bisset-implement, bisset-docs | read, edit |
+| `bisset-docs` | 5 | ❌ | bisset-implement | agent, read, edit, search |
 | `bisset-database` | 5 | ❌ | bisset-implement | read, edit, execute |
 | `bisset-cloud` | 5 | ❌ | bisset-implement | read, edit, execute |
 | `bisset-devops` | 5 | ❌ | bisset-implement | read, edit, execute |

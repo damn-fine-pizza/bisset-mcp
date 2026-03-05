@@ -38,6 +38,7 @@ Route to the appropriate specialist:
 | schema, migration, query, index, ORM, table, SQL, NoSQL, database, data model | **bisset-database** |
 | AWS, GCP, Azure, Terraform, CDK, CloudFormation, infrastructure, IaC, serverless | **bisset-cloud** |
 | CI/CD, pipeline, Docker, Kubernetes, Helm, deployment, monitoring, observability | **bisset-devops** |
+| README, docs, documentation, user guide, API reference, ADR, onboarding, flow diagrams | **bisset-docs** |
 
 If a task spans multiple domains, delegate to the **primary** domain first, then to
 secondary specialists sequentially for their specific sub-components.
@@ -82,6 +83,28 @@ Call `workflow_report()`. Move to the next task.
 
 When `workflow_is_done()` returns `done: true`:
 - Call `workflow_report()` and display the implementation summary.
+
+### Documentation update (mandatory)
+
+Before advancing the phase, invoke **bisset-docs** to update all documentation
+to reflect the completed implementation:
+
+```
+agent("bisset-docs", {
+  "task": "Update all project documentation to reflect the completed implementation",
+  "scope": [
+    "README.md — update architecture overview, feature list, quick-start, config reference",
+    "docs/api/ — sync API reference with any new or changed endpoints/interfaces",
+    "docs/flows/ — document user flows for every new user-facing feature (collaborate with bisset-ux)",
+    "docs/architecture/ — update component diagram and any affected ADRs",
+    "CONTRIBUTING.md / docs/dev/ — update if build, test, or setup steps changed"
+  ],
+  "artifacts_changed": <list of all files changed during this implementation loop>
+})
+```
+
+Only proceed after bisset-docs confirms all docs are updated and consistent.
+
 - Call `workflow_advance_phase("implementation_complete")`.
 - Return control to **bisset**.
 
@@ -90,6 +113,8 @@ When `workflow_is_done()` returns `done: true`:
 If the dispatcher returns here with signal `coverage_failed`:
 - Read the coverage report (failing scenarios + coverage %).
 - For each gap, delegate to the appropriate specialist to fix code or tests.
+- Once all gaps are resolved, invoke **bisset-docs** to sync any documentation
+  affected by the fixes (updated behaviour, new edge cases, changed interfaces).
 - Call `workflow_advance_phase("implementation_complete")` and return control to **bisset**.
 
 ## Rules
