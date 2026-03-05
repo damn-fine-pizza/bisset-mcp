@@ -8,6 +8,7 @@ Run with:
 """
 import os
 import logging
+import json
 from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -17,7 +18,24 @@ from .storage import Storage
 from .catalog import Catalog
 from .renderers import Renderers
 
-logging.basicConfig(level=logging.INFO)
+# Pretty JSON logging (can be disabled with WORKFLOW_PRETTY_JSON_LOGS=0)
+class PrettyJSONFormatter(logging.Formatter):
+    def format(self, record):
+        msg = record.getMessage()
+        try:
+            parsed = json.loads(msg)
+            record.msg = json.dumps(parsed, indent=2, ensure_ascii=False)
+            record.args = ()
+        except Exception:
+            pass
+        return super().format(record)
+
+pretty = os.environ.get('WORKFLOW_PRETTY_JSON_LOGS', '1').lower() not in ('0', 'false', 'no')
+if pretty:
+    handler = logging.StreamHandler()
+    handler.setFormatter(PrettyJSONFormatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+    logging.getLogger().handlers = [handler]
+    logging.getLogger().setLevel(logging.INFO)
 logger = logging.getLogger('workflow-server')
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'workflow.db')

@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import logging
+import json
 from .storage import Storage
 from .catalog import Catalog
 from .security import validate_path, validate_command, safe_split_args, SecurityError
@@ -100,7 +101,7 @@ class WorkflowEngine:
     def new_session(self, name: str = '') -> dict:
         sid = self.storage.create_session(name)
         self.phase = 'interview'
-        logger.info('new_session sid=%s name=%r', sid, name or sid)
+        logger.info(json.dumps({'event':'new_session','session_id':sid,'name':name or sid}, ensure_ascii=False))
         return {'session_id': sid, 'name': name or sid}
 
     def switch_session(self, session_id: str) -> dict:
@@ -111,7 +112,7 @@ class WorkflowEngine:
         self._load_phase()
         sub_phase = self.storage.read_meta('sub_phase')
         row = self.storage.get_session(session_id)
-        logger.info('switch_session sid=%s phase=%s sub_phase=%s', session_id, self.phase, sub_phase)
+        logger.info(json.dumps({'event':'switch_session','session_id':session_id,'phase':self.phase,'sub_phase':sub_phase}, ensure_ascii=False))
         return {'session_id': row[0], 'name': row[1], 'phase': self.phase, 'sub_phase': sub_phase}
 
     def detect_session(self, cwd: str) -> dict:
@@ -186,7 +187,7 @@ class WorkflowEngine:
         self.storage.add_questions(qs)
         self.storage.write_meta('phase', 'interview')
         self.phase = 'interview'
-        logger.info('start sid=%s questions=%d meta=%r', self._session_id, len(qs), project_meta)
+        logger.info(json.dumps({'event':'start','session_id':self._session_id,'questions':len(qs),'project_meta':project_meta}, ensure_ascii=False))
         return {'status': 'started', 'session_id': self._session_id, 'project_meta': project_meta}
 
     def get_state(self):
@@ -212,14 +213,14 @@ class WorkflowEngine:
             logger.info('next_question: all answered')
             return {'done': True, 'message': 'All questions answered'}
         qid, text = unanswered[0]
-        logger.info('next_question qid=%s remaining=%d text=%r', qid, len(unanswered), text)
+        logger.info(json.dumps({'event':'next_question','qid':qid,'remaining':len(unanswered),'text':text}, ensure_ascii=False))
         return {'id': qid, 'text': text}
 
     def record_answer(self, question_id, answer_text):
         unanswered = {q[0]: q[1] for q in self.storage.list_unanswered()}
         question_text = unanswered.get(question_id, '?')
         self.storage.record_answer(question_id, answer_text)
-        logger.info('record_answer qid=%s question=%r answer=%r', question_id, question_text, answer_text[:120] if answer_text else '')
+        logger.info(json.dumps({'event':'record_answer','qid':question_id,'question':question_text,'answer':answer_text[:120] if answer_text else ''}, ensure_ascii=False))
         return {'ok': True, 'question_id': question_id}
 
     def advance_phase(self, signal: str) -> dict:
@@ -235,7 +236,7 @@ class WorkflowEngine:
         if new_sub_phase == 'done':
             self.storage.write_meta('phase', 'done')
             self.phase = 'done'
-        logger.info('advance_phase signal=%s %s→%s', signal, current, new_sub_phase)
+        logger.info(json.dumps({'event':'advance_phase','signal':signal,'from':current,'to':new_sub_phase}, ensure_ascii=False))
         return {'ok': True, 'signal': signal, 'sub_phase': new_sub_phase}
 
     def store_proposal(self, paradigm: str, content: str) -> dict:
@@ -277,7 +278,7 @@ class WorkflowEngine:
         self.storage.write_meta('phase', 'execution')
         self.storage.write_meta('sub_phase', 'phase_2_5_requirements')
         self.phase = 'execution'
-        logger.info('freeze_spec spec=%s tasks=%d', spec_path, len(tasks))
+        logger.info(json.dumps({'event':'freeze_spec','spec_path':spec_path,'tasks':len(tasks)}, ensure_ascii=False))
         return {'spec_path': spec_path}
 
     def next_task(self):
@@ -292,7 +293,7 @@ class WorkflowEngine:
             logger.info('next_task: no more pending tasks')
             return {'done': True, 'message': 'All tasks complete or none pending'}
         tid, title, description, acceptance_criteria = t
-        logger.info('next_task tid=%s title=%r', tid, title)
+        logger.info(json.dumps({'event':'next_task','task_id':tid,'title':title}, ensure_ascii=False))
         return {'id': tid, 'title': title, 'description': description or '', 'acceptance_criteria': acceptance_criteria or ''}
 
     def add_task(self, task_id: str, title: str, description: str = '', acceptance_criteria: str = '', negative_acceptance_criteria: str = '') -> dict:
@@ -367,8 +368,7 @@ class WorkflowEngine:
         if all_done:
             self.storage.write_meta('phase', 'done')
             self.phase = 'done'
-        logger.info('accept_task_result tid=%s artifacts=%d tests=%d all_done=%s',
-                    task_id, len(artifacts_changed or []), len(tests_run or []), all_done)
+        logger.info(json.dumps({'event':'accept_task_result','task_id':task_id,'artifacts':len(artifacts_changed or []),'tests':len(tests_run or []),'all_done':all_done}, ensure_ascii=False))
         return {'ok': True, 'task_id': task_id}
 
     def run_tests(self, task_id: str) -> dict:
