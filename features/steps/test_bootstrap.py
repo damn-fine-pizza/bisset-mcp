@@ -33,29 +33,25 @@ def answer_all(workflow_client):
 def freeze(workflow_client):
     r = workflow_client.post('/tools/workflow_freeze_spec', json={'arguments': {}})
     assert r.status_code == 200
-    return r.json()
+    return {'resp': r.json(), 'client': workflow_client}
 
 
 @then('a specification document should exist')
 def spec_exists(freeze_result):
-    import os
-    assert os.path.exists(freeze_result['spec_path'])
+    r = freeze_result['client'].get('/resources/spec_current')
+    assert r.status_code == 200
 
 
 @then('an ADR stub should exist')
 def adr_exists(freeze_result):
-    import os
-    spec_path = freeze_result['spec_path']
-    adr_path = os.path.join(os.path.dirname(spec_path), 'decisions', 'adr-0001.md')
-    assert os.path.exists(adr_path)
+    r = freeze_result['client'].get('/resources/adr:adr-0001')
+    assert r.status_code == 200
 
 
 @then('a work breakdown should exist')
 def plan_exists(freeze_result):
-    import os
-    spec_path = freeze_result['spec_path']
-    plan_path = os.path.join(os.path.dirname(spec_path), 'plan', 'workbreakdown.yaml')
-    assert os.path.exists(plan_path)
+    r = freeze_result['client'].get('/resources/plan_workbreakdown')
+    assert r.status_code == 200
 
 
 @then(parsers.parse('the workflow should be in "{phase}" phase'))

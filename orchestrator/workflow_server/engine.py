@@ -252,16 +252,8 @@ class WorkflowEngine:
         return {'proposals': [{'paradigm': r[0], 'content': r[1], 'created_at': r[2]} for r in rows]}
 
     def freeze_spec(self):
-        meta = self.storage.read_meta('project_meta') or {}
-        project_path = meta.get('project_path', '')
-        if not project_path:
-            return {
-                'error': 'project_path not set',
-                'fix': 'Call workflow_start again with project_path set to the absolute path of the project on disk. Example: workflow_start({"name": "...", "project_path": "/abs/path/to/project", "test_runner": "cargo test"})',
-            }
-        # Security: ensure project_path is an absolute path (no traversal from cwd)
-        if not os.path.isabs(project_path):
-            return {'error': 'project_path must be an absolute path', 'fix': f'Set project_path to an absolute path, e.g. /home/user/myproject instead of {project_path!r}'}
+        # Persist spec, ADR stub and plan into DB; do not require a project_path because
+        # artifacts are stored in session-scoped meta now.
         answers = self.storage.get_all_answers()
         spec_path = self.renderers.render_spec(answers)
         self.renderers.write_adr_stub('Initial decisions')

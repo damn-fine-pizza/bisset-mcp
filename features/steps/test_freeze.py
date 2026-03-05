@@ -29,47 +29,62 @@ def already_frozen(frozen_client):
 def do_freeze(workflow_client):
     r = workflow_client.post('/tools/workflow_freeze_spec', json={'arguments': {}})
     assert r.status_code == 200
-    return r.json()
+    return {'resp': r.json(), 'client': workflow_client}
 
 
 @when('I freeze the specification again', target_fixture='freeze_result')
 def freeze_again(workflow_client):
     r = workflow_client.post('/tools/workflow_freeze_spec', json={'arguments': {}})
     assert r.status_code == 200
-    return r.json()
+    return {'resp': r.json(), 'client': workflow_client}
 
 
 @then(parsers.parse('the file "{filename}" should exist'))
 def file_exists(freeze_result, filename):
-    base = os.path.dirname(freeze_result['spec_path'])
-    path = os.path.join(base, filename)
-    assert os.path.exists(path), f'Expected file not found: {path}'
+    # Resources are now stored in DB; use the resources endpoint to retrieve content
+    # Map expected filenames to resource names
+    mapping = {
+        'spec_current.md': 'spec_current',
+        'plan/workbreakdown.yaml': 'plan_workbreakdown',
+    }
+    if filename.startswith('decisions/'):
+        # decisions/adr-0001.md -> adr:adr-0001
+        adr_id = os.path.basename(filename).replace('.md', '')
+        r = freeze_result['client'].get(f"/resources/adr:{adr_id}")
+    else:
+        res_name = mapping.get(filename)
+        r = freeze_result['client'].get(f"/resources/{res_name}")
+    assert r.status_code == 200, f'Expected resource not found for {filename}: {r.status_code} {r.text}'
 
 
 @then('it should contain my answers')
 def spec_contains_answers(freeze_result):
-    with open(freeze_result['spec_path']) as f:
-        content = f.read()
+    r = freeze_result['client'].get('/resources/spec_current')
+    assert r.status_code == 200
+    content = r.json().get('content', '')
     assert 'answer for q-001' in content
 
 
 @then('it should have status "Proposed"')
 def adr_has_proposed(freeze_result):
-    base = os.path.dirname(freeze_result['spec_path'])
-    adr_path = os.path.join(base, 'decisions', 'adr-0001.md')
-    with open(adr_path) as f:
-        content = f.read()
+    r = freeze_result['client'].get('/resources/adr:adr-0001')
+    assert r.status_code == 200
+    content = r.json().get('content', '')
     assert 'Proposed' in content
 
 
 @then(parsers.parse('it should contain the default tasks'))
 def plan_has_default_tasks(freeze_result):
     from orchestrator.workflow_server.catalog import PLAN_TASKS
-    base = os.path.dirname(freeze_result['spec_path'])
-    plan_path = os.path.join(base, 'plan', 'workbreakdown.yaml')
-    with open(plan_path) as f:
-        content = f.read()
-    assert content.count('id: t-') == len(PLAN_TASKS)
+    r = freeze_result['client'].get('/resources/plan_workbreakdown')
+    assert r.status_code == 200
+    content = r.json().get('content', '') or ''
+    # content may be structured JSON when stored in DB; normalize to string
+    if isinstance(content, dict):
+        s = '\n'.join([t['id'] for t in content.get('tasks', [])])
+    else:
+        s = str(content)
+    assert s.count('t-') == len(PLAN_TASKS)
 
 
 @then(parsers.parse('the workflow phase should be "{phase}"'))
@@ -91,8 +106,9 @@ def no_error(freeze_result):
 
 @then(parsers.parse('an error field "{field}" with value "{value}" should be returned'))
 def error_field_value(freeze_result, field, value):
-    assert field in freeze_result, f'Expected field "{field}" in {freeze_result}'
-    assert freeze_result[field] == value
+    resp = freeze_result.get('resp') if isinstance(freeze_result, dict) else freeze_result
+    assert field in resp, f'Expected field "{field}" in {resp}'
+    assert resp[field] == value
 
 
 @then(parsers.parse('the workflow phase should remain "{phase}"'))

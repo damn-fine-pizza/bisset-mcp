@@ -48,11 +48,12 @@ def no_error_raised(answer_result):
 def freeze(workflow_client):
     r = workflow_client.post('/tools/workflow_freeze_spec', json={'arguments': {}})
     assert r.status_code == 200
-    return r.json()
+    return {'resp': r.json(), 'client': workflow_client}
 
 
 @then(parsers.parse('the specification should contain "UNANSWERED" for all fields'))
 def spec_has_unanswered(freeze_result):
-    with open(freeze_result['spec_path']) as f:
-        content = f.read()
+    r = freeze_result['client'].get('/resources/spec_current')
+    assert r.status_code == 200
+    content = r.json().get('content', '')
     assert '_UNANSWERED_' in content

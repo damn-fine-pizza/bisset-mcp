@@ -148,7 +148,9 @@ def tool_list_proposals(req: ToolRequest):
 
 @app.post('/tools/workflow_start')
 def tool_start(req: ToolRequest):
-    if err := _require_session(): return err
+    # Create a session automatically if none is active to simplify client usage
+    if not _storage._active_session_id:
+        _engine.new_session('auto')
     return _engine.start(req.arguments.get('project_meta', {}))
 
 
@@ -251,21 +253,37 @@ def tool_get_events(req: ToolRequest):
 
 # ─── Resources ───────────────────────────────────────────────────────────────
 
-RESOURCE_FILES = {
-    'spec_current':       os.path.join(RESOURCES_DIR, 'spec', 'current.md'),
-    'constraints':        os.path.join(RESOURCES_DIR, 'constraints.json'),
-    'adr_index':          os.path.join(RESOURCES_DIR, 'decisions', 'adr-index.md'),
-    'plan_workbreakdown': os.path.join(RESOURCES_DIR, 'plan', 'workbreakdown.yaml'),
-}
-
-
 @app.get('/resources/{name}')
 def get_resource(name: str):
-    path = RESOURCE_FILES.get(name)
-    if not path or not os.path.exists(path):
-        raise HTTPException(404, f'resource {name!r} not found')
-    with open(path) as f:
-        return {'name': name, 'content': f.read()}
+    # Prefer DB-backed resources stored in session meta to avoid filesystem I/O
+    if name == 'spec_current':
+        v = _storage.read_meta('spec_current') or {}
+        content = v.get('content') or ''
+        return {'name': name, 'content': content}
+    if name == 'plan_workbreakdown':
+        v = _storage.read_meta('plan_workbreakdown') or {}
+        content = v.get('tasks') or v.get('content') or ''
+        return {'name': name, 'content': content}
+    if name.startswith('adr:'):
+        # name like 'adr:adr-0001'
+        v = _storage.read_meta(name)
+        content = v.get('content') if v else None
+        if content is None:
+            raise HTTPException(404, f'resource {name!r} not found')
+        return {'name': name, 'content': content}
+    if name.startswith('adr:'):
+        # name like 'adr:adr-0001'
+        v = _storage.read_meta(name)
+        content = v.get('content') if v else None
+        if content is None:
+            raise HTTPException(404, f'resource {name!r} not found')
+        return {'name': name, 'content': content}
+    # fallback to static constraints file if present on disk
+    path = os.path.join(RESOURCES_DIR, f'{name}.json') if name == 'constraints' else None
+    if path and os.path.exists(path):
+        with open(path) as f:
+            return {'name': name, 'content': f.read()}
+    raise HTTPException(404, f'resource {name!r} not found')
 
 
 # ─── Prompts (dynamic — composed from live DB state) ─────────────────────────

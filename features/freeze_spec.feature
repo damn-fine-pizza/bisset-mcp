@@ -32,8 +32,8 @@ Feature: Freeze Specification
     Then the workflow phase should still be "execution"
     And no error should be returned
 
-  Scenario: Freeze is blocked when project_path is not set
+  Scenario: Freeze does not require project_path
     Given I have answered all interview questions without project_path
     When I freeze the specification
-    Then an error field "error" with value "project_path not set" should be returned
-    And the workflow phase should remain "interview"
+    Then the workflow phase should be "execution"
+    And no error should be returned
