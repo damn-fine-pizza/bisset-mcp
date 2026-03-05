@@ -200,15 +200,18 @@ def workflow_run_tests(task_id: str) -> dict:
 
 
 @mcp.tool()
-def workflow_add_task(task_id: str, title: str, description: str = '', acceptance_criteria: str = '') -> dict:
+def workflow_add_task(task_id: str, title: str, description: str = '', acceptance_criteria: str = '', negative_acceptance_criteria: str = '') -> dict:
     """Add a project-specific task with optional Gherkin acceptance criteria.
     Call this after workflow_freeze_spec to replace or augment generic tasks with tasks
-    tailored to the actual project. acceptance_criteria should be Gherkin Given/When/Then text."""
+    tailored to the actual project. acceptance_criteria should be Gherkin Given/When/Then
+    text for positive (happy-path) scenarios. negative_acceptance_criteria should be Gherkin
+    for negative/edge-case scenarios and is written to a separate .negative.feature file."""
     return client.call_tool('workflow_add_task', {
         'task_id': task_id,
         'title': title,
         'description': description,
         'acceptance_criteria': acceptance_criteria,
+        'negative_acceptance_criteria': negative_acceptance_criteria,
     })
 
 

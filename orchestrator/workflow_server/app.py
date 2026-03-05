@@ -69,7 +69,8 @@ def tool_list_tasks(req: ToolRequest):
     status_filter = req.arguments.get('status')
     rows = _storage.list_tasks()
     tasks = [{'id': r[0], 'title': r[1], 'status': r[2], 'created_at': r[3], 'done_at': r[4],
-               'evidence': r[5], 'description': r[6] or '', 'acceptance_criteria': r[7] or ''} for r in rows]
+               'evidence': r[5], 'description': r[6] or '', 'acceptance_criteria': r[7] or '',
+               'negative_acceptance_criteria': r[8] or ''} for r in rows]
     if status_filter:
         tasks = [t for t in tasks if t['status'] == status_filter]
     return {'tasks': tasks}
@@ -83,6 +84,7 @@ def tool_add_task(req: ToolRequest):
         a['title'],
         a.get('description', ''),
         a.get('acceptance_criteria', ''),
+        a.get('negative_acceptance_criteria', ''),
     )
 
 

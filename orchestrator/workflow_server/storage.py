@@ -32,7 +32,7 @@ class Storage:
         cur.execute('''CREATE TABLE IF NOT EXISTS tasks (
             id TEXT, session_id TEXT,
             title TEXT, status TEXT, created_at REAL, done_at REAL, evidence TEXT,
-            description TEXT, acceptance_criteria TEXT,
+            description TEXT, acceptance_criteria TEXT, negative_acceptance_criteria TEXT,
             PRIMARY KEY (id, session_id)
         )''')
         cur.execute('''CREATE TABLE IF NOT EXISTS task_test_runs (
@@ -48,7 +48,7 @@ class Storage:
             runner_output TEXT
         )''')
         # migrate existing DBs that lack the new columns
-        for col in ('description', 'acceptance_criteria'):
+        for col in ('description', 'acceptance_criteria', 'negative_acceptance_criteria'):
             try:
                 cur.execute(f'ALTER TABLE tasks ADD COLUMN {col} TEXT')
             except Exception:
@@ -151,11 +151,11 @@ class Storage:
         self.conn.commit()
         self._touch()
 
-    def add_task(self, tid: str, title: str, description: str = '', acceptance_criteria: str = ''):
+    def add_task(self, tid: str, title: str, description: str = '', acceptance_criteria: str = '', negative_acceptance_criteria: str = ''):
         cur = self.conn.cursor()
         cur.execute(
-            'INSERT OR REPLACE INTO tasks (id, session_id, title, status, created_at, description, acceptance_criteria) VALUES (?,?,?,?,?,?,?)',
-            (tid, self.sid, title, 'pending', time.time(), description or '', acceptance_criteria or ''),
+            'INSERT OR REPLACE INTO tasks (id, session_id, title, status, created_at, description, acceptance_criteria, negative_acceptance_criteria) VALUES (?,?,?,?,?,?,?,?)',
+            (tid, self.sid, title, 'pending', time.time(), description or '', acceptance_criteria or '', negative_acceptance_criteria or ''),
         )
         self.conn.commit()
         self._touch()
@@ -168,7 +168,7 @@ class Storage:
 
     def get_task(self, tid: str):
         cur = self.conn.cursor()
-        cur.execute('SELECT id, title, status, description, acceptance_criteria FROM tasks WHERE id=? AND session_id=?', (tid, self.sid))
+        cur.execute('SELECT id, title, status, description, acceptance_criteria, negative_acceptance_criteria FROM tasks WHERE id=? AND session_id=?', (tid, self.sid))
         return cur.fetchone()
 
     def accept_task(self, tid, evidence):
@@ -186,7 +186,7 @@ class Storage:
 
     def list_tasks(self):
         cur = self.conn.cursor()
-        cur.execute('SELECT id, title, status, created_at, done_at, evidence, description, acceptance_criteria FROM tasks WHERE session_id=? ORDER BY created_at',
+        cur.execute('SELECT id, title, status, created_at, done_at, evidence, description, acceptance_criteria, negative_acceptance_criteria FROM tasks WHERE session_id=? ORDER BY created_at',
                     (self.sid,))
         return cur.fetchall()
 

@@ -26,20 +26,41 @@ by the bisset dispatcher. Always check which mode you are in before proceeding.
 
 **Triggered by**: bisset dispatcher after `bisset-architect` signals `tasks_ready`.
 
-**Goal**: generate one `.feature` file per task, write them to disk, and attach the
-Gherkin text to each task via `workflow_add_task`.
+**Goal**: generate TWO `.feature` files per task — one for positive scenarios and one
+for negative/edge-case scenarios — write them to disk, and attach both Gherkin texts
+to each task via `workflow_add_task`.
 
 ### Steps
 
 1. Call `workflow_list_tasks()` to get the full task list.
 2. Read the project source tree (`read` / `search`) and any existing feature files.
-3. For each task, generate a `.feature` file following the quality rules below.
-4. Write the file to `<features_dir>/<task_id>.feature` (read `features_dir` from
-   `workflow_get_state()` → `project_meta`).
-5. Call `workflow_add_task(task_id=..., title=..., description=..., acceptance_criteria=<gherkin>)`
-   to attach the generated Gherkin to the task record.
-6. Report to the user: tasks covered, scenario count, files written.
+3. For each task, generate both feature files following the quality rules below.
+4. Write files to `<features_dir>/` (read `features_dir` from
+   `workflow_get_state()` → `project_meta`):
+   - `<task_id>.feature` — positive scenarios (happy paths, success flows)
+   - `<task_id>.negative.feature` — negative scenarios (invalid inputs, error paths,
+     boundary violations, edge cases, security rejections)
+5. Call `workflow_add_task(task_id=..., title=..., description=...,
+   acceptance_criteria=<positive gherkin>,
+   negative_acceptance_criteria=<negative gherkin>)`
+   to attach both Gherkin texts to the task record.
+6. Report to the user: tasks covered, scenario count per file, files written.
 7. Return control to **bisset** with signal: `features_written`.
+
+### Positive vs Negative split
+
+| `.feature` (positive) | `.negative.feature` (negative) |
+|---|---|
+| Happy paths and success flows | Invalid inputs and rejected actions |
+| Main use cases (Given normal state) | Boundary violations (BVA: just outside limits) |
+| Expected state transitions | Illegal state transitions |
+| Correct authorization | Unauthorized / insufficient permissions |
+| Successful I/O operations | I/O failures, timeouts, malformed payloads |
+| Normal concurrency | Race conditions, duplicate submissions |
+
+Allocate **~35-40% of total scenarios** to the negative file.
+Every negative scenario must have a `@negative` tag; add `@edge`, `@security`,
+`@boundary` tags where applicable.
 
 ---
 
@@ -54,10 +75,9 @@ whether the project meets the 80% threshold.
 
 1. Read `project_meta` from `workflow_get_state()` to get `test_runner`, `test_runner_args`,
    `features_dir`, and `bdd_coverage_threshold` (default: 80%).
-2. Run the full test suite via `execute`:
-   ```
-   <test_runner> <test_runner_args> <features_dir>
-   ```
+2. Run the full test suite via `execute`. For each task the backend automatically
+   includes both `<task_id>.feature` and `<task_id>.negative.feature` (if it exists)
+   in the test command — no extra configuration required.
 3. Parse the output:
    - Count `passed` and `failed` scenarios.
    - Coverage = `passed / (passed + failed) * 100`.
