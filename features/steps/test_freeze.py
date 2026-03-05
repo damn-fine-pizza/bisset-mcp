@@ -11,6 +11,15 @@ def all_answered(answered_client):
     return answered_client
 
 
+@given('I have answered all interview questions without project_path', target_fixture='workflow_client')
+def all_answered_no_path(workflow_client):
+    """Session started without project_path — freeze should be blocked."""
+    workflow_client.post('/tools/workflow_new_session', json={'arguments': {'name': 'NoPP'}})
+    workflow_client.post('/tools/workflow_start', json={'arguments': {'project_meta': {'name': 'NoPP'}}})
+    _answer_all(workflow_client)
+    return workflow_client
+
+
 @given('I have already frozen the specification', target_fixture='workflow_client')
 def already_frozen(frozen_client):
     return frozen_client
@@ -78,3 +87,15 @@ def phase_still_is(workflow_client, phase):
 @then('no error should be returned')
 def no_error(freeze_result):
     assert 'error' not in freeze_result
+
+
+@then(parsers.parse('an error field "{field}" with value "{value}" should be returned'))
+def error_field_value(freeze_result, field, value):
+    assert field in freeze_result, f'Expected field "{field}" in {freeze_result}'
+    assert freeze_result[field] == value
+
+
+@then(parsers.parse('the workflow phase should remain "{phase}"'))
+def phase_remains(workflow_client, phase):
+    r = workflow_client.post('/tools/workflow_get_state', json={'arguments': {}})
+    assert r.json()['phase'] == phase

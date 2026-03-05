@@ -53,7 +53,7 @@ def fresh_session():
         pass
     client, storage, engine = _build_client(DB)
     client.post('/tools/workflow_new_session', json={'arguments': {'name': 'E2ETest'}})
-    client.post('/tools/workflow_start', json={'arguments': {'project_meta': {'name': 'E2ETest'}}})
+    client.post('/tools/workflow_start', json={'arguments': {'project_meta': {'name': 'E2ETest', 'project_path': '/tmp/e2e_test_project', 'test_runner': 'echo ok'}}})
     yield {'client': client, 'db': DB}
     try:
         os.remove(DB)

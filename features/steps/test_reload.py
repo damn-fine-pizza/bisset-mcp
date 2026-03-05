@@ -36,7 +36,7 @@ def _reconnect_client(db_path):
 def answered_3():
     client, storage, engine = _fresh_client()
     client.post('/tools/workflow_new_session', json={'arguments': {'name': 'ReloadTest'}})
-    client.post('/tools/workflow_start', json={'arguments': {'project_meta': {}}})
+    client.post('/tools/workflow_start', json={'arguments': {'project_meta': {'project_path': '/tmp/reload_test', 'test_runner': 'echo ok'}}})
     for qid in ['q-001', 'q-002', 'q-003']:
         client.post('/tools/workflow_record_answer', json={
             'arguments': {'question_id': qid, 'answer_text': 'answer'}
@@ -48,7 +48,7 @@ def answered_3():
 def spec_frozen_for_reload():
     client, storage, engine = _fresh_client()
     client.post('/tools/workflow_new_session', json={'arguments': {'name': 'ReloadTest'}})
-    client.post('/tools/workflow_start', json={'arguments': {'project_meta': {}}})
+    client.post('/tools/workflow_start', json={'arguments': {'project_meta': {'project_path': '/tmp/reload_test', 'test_runner': 'echo ok'}}})
     from orchestrator.workflow_server.catalog import QUESTIONS
     for qid, _ in QUESTIONS:
         client.post('/tools/workflow_record_answer', json={

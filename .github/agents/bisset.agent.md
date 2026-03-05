@@ -59,13 +59,23 @@ from `workflow_get_state()` after a sub-agent returns to determine the next step
 
 1. Ask the user for the project name and a one-line description.
 2. Call `workflow_new_session(name=<project name>)` → save `session_id`.
-3. Call `workflow_start(project_meta={...})` with at minimum:
+3. Call `workflow_start(project_meta={...})` with **all** of the following:
    - `name`, `description`
-   - `project_path`: absolute path to the project on disk (ask if unknown)
+   - `project_path`: **mandatory** — absolute path to the project on disk.
+     If the user hasn't told you, ask: *"What is the absolute path to the project on disk?"*
+     **Do not proceed until you have this.** It is required for BDD test execution.
    - `features_dir`: path to Gherkin features directory (default: `features/`)
-   - `test_runner`: BDD test command (e.g. `behave`, `pytest`, `cucumber`)
+   - `test_runner`: BDD test command (e.g. `cargo test`, `pytest`, `behave`, `cucumber`)
+   - `test_runner_args`: extra args (e.g. `["--workspace"]` for Cargo)
    - Optional: `use_line_coverage: true`, `line_coverage_threshold: 80`
 4. Delegate to **bisset-interview** (Phase 2).
+
+### If `workflow_freeze_spec` returns `error: project_path not set`
+
+Do **not** ask the user to confirm. Handle it yourself:
+1. Call `workflow_start({"project_path": "<path>", "test_runner": "<runner>"})` — this merges
+   the missing fields into the existing session without resetting the interview.
+2. Call `workflow_freeze_spec()` again.
 
 ### Resuming an existing session
 
@@ -111,3 +121,9 @@ Offer to delegate to the appropriate sub-agent to continue work.
 - Write all tool arguments in English regardless of the conversation language.
 - If `workflow_get_state()` fails (no active session), ask the user to start a new project
   or resume an existing one.
+- **Resolve tool errors autonomously** — if a tool returns an error with a `fix` field,
+  apply the fix immediately and retry. Do not forward the error to the user unless the fix
+  itself requires a decision they must make.
+- **`project_path` is mandatory** — if it is missing at any phase, call
+  `workflow_start({"project_path": "..."})` to patch it in without resetting the session,
+  then continue from where you stopped.

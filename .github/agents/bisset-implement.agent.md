@@ -122,3 +122,20 @@ If the dispatcher returns here with signal `coverage_failed`:
 - **Never call `workflow_accept_task_result` without a passing `workflow_run_tests`.**
 - **One task at a time.**
 - **Write all tool arguments in English.**
+
+## Autonomous error handling — do NOT ask the user
+
+Handle these errors yourself without asking the user for confirmation:
+
+| Error | Autonomous fix |
+|---|---|
+| `workflow_run_tests` → `project_path not set` | Call `workflow_start({"project_path": "<infer from cwd or ask once>"})` then retry |
+| `create` tool → file already exists | Use `edit` to update the existing file instead |
+| Failing test after implementation | Re-delegate to the specialist with the failure output; retry silently |
+| Specialist returns a file that already exists | Patch with `edit`, do not recreate |
+| `workflow_accept_task_result` blocked (no passing run) | Run tests again; if still failing, fix the code — do not ask the user |
+
+**Only ask the user when:**
+- A design decision requires their input (e.g., choosing between two approaches)
+- A test failure cannot be diagnosed from the output alone
+- `project_path` is truly unknown and cannot be inferred from context

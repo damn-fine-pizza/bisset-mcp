@@ -154,6 +154,14 @@ class WorkflowEngine:
             logger.warning('start: no active session')
             return {'error': 'No active session. Call workflow_new_session first.'}
         project_meta = project_meta or {}
+        # If already started (phase != interview), merge meta instead of resetting
+        current_phase = self.storage.read_meta('phase') or 'interview'
+        if current_phase != 'interview':
+            existing = self.storage.read_meta('project_meta') or {}
+            existing.update({k: v for k, v in project_meta.items() if v})
+            self.storage.write_meta('project_meta', existing)
+            logger.info('start (meta update only) sid=%s meta=%r', self._session_id, existing)
+            return {'status': 'updated', 'session_id': self._session_id, 'project_meta': existing}
         self.storage.write_meta('project_meta', project_meta)
         qs = self.catalog.questions()
         self.storage.add_questions(qs)
@@ -225,6 +233,12 @@ class WorkflowEngine:
         return {'proposals': [{'paradigm': r[0], 'content': r[1], 'created_at': r[2]} for r in rows]}
 
     def freeze_spec(self):
+        meta = self.storage.read_meta('project_meta') or {}
+        if not meta.get('project_path'):
+            return {
+                'error': 'project_path not set',
+                'fix': 'Call workflow_start again with project_path set to the absolute path of the project on disk. Example: workflow_start({"name": "...", "project_path": "/abs/path/to/project", "test_runner": "cargo test"})',
+            }
         answers = self.storage.get_all_answers()
         spec_path = self.renderers.render_spec(answers)
         self.renderers.write_adr_stub('Initial decisions')
