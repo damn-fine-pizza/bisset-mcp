@@ -7,6 +7,7 @@ description: >
   coverage. Can feed generated acceptance criteria directly into a Bisset workflow.
   Trigger phrases: 'generate feature files', 'create BDD test suite', 'write Gherkin
   scenarios', 'design test coverage', 'generate test cases from requirements'.
+user-invocable: false
 tools:
   - read
   - edit
