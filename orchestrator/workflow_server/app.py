@@ -40,6 +40,24 @@ def health():
 
 # ─── Tools ───────────────────────────────────────────────────────────────────
 
+_NO_SESSION_ERROR = {
+    'error': 'no_active_session',
+    'message': (
+        'No session is active. '
+        'Call workflow_list_sessions() to see existing sessions, '
+        'then workflow_switch_session(session_id) to resume one, '
+        'or workflow_new_session() to start a new project.'
+    ),
+}
+
+
+def _require_session() -> dict | None:
+    """Return an error dict if no session is active, else None."""
+    if not _storage._active_session_id:
+        return _NO_SESSION_ERROR
+    return None
+
+
 class ToolRequest(BaseModel):
     arguments: dict[str, Any] = {}
 
@@ -64,8 +82,7 @@ def tool_list_sessions(req: ToolRequest):
 
 @app.post('/tools/workflow_list_tasks')
 def tool_list_tasks(req: ToolRequest):
-    if not _storage._active_session_id:
-        return {'tasks': []}
+    if err := _require_session(): return err
     status_filter = req.arguments.get('status')
     rows = _storage.list_tasks()
     tasks = [{'id': r[0], 'title': r[1], 'status': r[2], 'created_at': r[3], 'done_at': r[4],
@@ -78,6 +95,7 @@ def tool_list_tasks(req: ToolRequest):
 
 @app.post('/tools/workflow_add_task')
 def tool_add_task(req: ToolRequest):
+    if err := _require_session(): return err
     a = req.arguments
     return _engine.add_task(
         a['task_id'],
@@ -90,8 +108,7 @@ def tool_add_task(req: ToolRequest):
 
 @app.post('/tools/workflow_list_questions')
 def tool_list_questions(req: ToolRequest):
-    if not _storage._active_session_id:
-        return {'questions': []}
+    if err := _require_session(): return err
     answered_filter = req.arguments.get('answered')
     rows = _storage.get_all_answers()
     questions = [{'id': r[0], 'text': r[1], 'answer': r[2]} for r in rows]
@@ -104,53 +121,63 @@ def tool_list_questions(req: ToolRequest):
 
 @app.post('/tools/workflow_advance_phase')
 def tool_advance_phase(req: ToolRequest):
+    if err := _require_session(): return err
     return _engine.advance_phase(req.arguments.get('signal', ''))
 
 
 @app.post('/tools/workflow_store_proposal')
 def tool_store_proposal(req: ToolRequest):
+    if err := _require_session(): return err
     a = req.arguments
     return _engine.store_proposal(a.get('paradigm', ''), a.get('content', ''))
 
 
 @app.post('/tools/workflow_list_proposals')
 def tool_list_proposals(req: ToolRequest):
+    if err := _require_session(): return err
     return _engine.list_proposals()
 
 
 @app.post('/tools/workflow_start')
 def tool_start(req: ToolRequest):
+    if err := _require_session(): return err
     return _engine.start(req.arguments.get('project_meta', {}))
 
 
 @app.post('/tools/workflow_get_state')
 def tool_get_state(req: ToolRequest):
+    if err := _require_session(): return err
     return _engine.get_state()
 
 
 @app.post('/tools/workflow_next_question')
 def tool_next_question(req: ToolRequest):
+    if err := _require_session(): return err
     return _engine.next_question()
 
 
 @app.post('/tools/workflow_record_answer')
 def tool_record_answer(req: ToolRequest):
+    if err := _require_session(): return err
     a = req.arguments
     return _engine.record_answer(a['question_id'], a['answer_text'])
 
 
 @app.post('/tools/workflow_freeze_spec')
 def tool_freeze_spec(req: ToolRequest):
+    if err := _require_session(): return err
     return _engine.freeze_spec()
 
 
 @app.post('/tools/workflow_next_task')
 def tool_next_task(req: ToolRequest):
+    if err := _require_session(): return err
     return _engine.next_task()
 
 
 @app.post('/tools/workflow_run_tests')
 def tool_run_tests(req: ToolRequest):
+    if err := _require_session(): return err
     task_id = req.arguments.get('task_id', '')
     if not task_id:
         return {'error': 'task_id required'}
@@ -159,6 +186,7 @@ def tool_run_tests(req: ToolRequest):
 
 @app.post('/tools/workflow_accept_task_result')
 def tool_accept_task_result(req: ToolRequest):
+    if err := _require_session(): return err
     a = req.arguments
     return _engine.accept_task_result(
         a['task_id'],
@@ -171,16 +199,19 @@ def tool_accept_task_result(req: ToolRequest):
 
 @app.post('/tools/workflow_report')
 def tool_report(req: ToolRequest):
+    if err := _require_session(): return err
     return _engine.report()
 
 
 @app.post('/tools/workflow_is_done')
 def tool_is_done(req: ToolRequest):
+    if err := _require_session(): return err
     return _engine.is_done()
 
 
 @app.post('/tools/workflow_status')
 def tool_status(req: ToolRequest):
+    if err := _require_session(): return err
     return _engine.status()
 
 
@@ -195,6 +226,7 @@ def tool_bootstrap_project(req: ToolRequest):
 
 @app.post('/tools/workflow_run_until_blocked')
 def tool_run_until_blocked(req: ToolRequest):
+    if err := _require_session(): return err
     a = req.arguments
     return _engine.run_until_blocked(
         max_iterations=int(a.get('max_iterations', 20)),
@@ -204,6 +236,7 @@ def tool_run_until_blocked(req: ToolRequest):
 
 @app.post('/tools/workflow_get_events')
 def tool_get_events(req: ToolRequest):
+    if err := _require_session(): return err
     a = req.arguments
     return _engine.get_events(limit=int(a.get('limit', 50)))
 

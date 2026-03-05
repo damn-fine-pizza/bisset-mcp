@@ -68,17 +68,6 @@ class WorkflowEngine:
         self.catalog = catalog
         self.renderers = renderers
         self.phase = 'interview'
-        self._restore_last_session()
-
-    def _restore_last_session(self):
-        """On startup, auto-restore the most recently updated session so tools work without an explicit switch_session call."""
-        rows = self.storage.list_sessions()
-        if rows:
-            # rows ordered by updated_at DESC — first row is most recent
-            sid = rows[0][0]
-            self.storage.set_active_session(sid)
-            self._load_phase()
-            logger.info('auto-restored session sid=%s phase=%s', sid, self.phase)
 
     @property
     def _session_id(self):
