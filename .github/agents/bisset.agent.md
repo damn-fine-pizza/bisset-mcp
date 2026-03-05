@@ -66,6 +66,15 @@ Sub-agents hand control back to you with one of these signals:
 | `implementation_complete` | bisset-implement | delegate to bisset-test-gherkin (Phase 6) |
 | `coverage_passed` | bisset-test-gherkin (Phase 6) | project DONE — report to user |
 | `coverage_failed` | bisset-test-gherkin (Phase 6) | delegate to bisset-implement (Phase 5) again |
+| `review_passed` | bisset-review | healthy — report to user |
+| `review_failed` | bisset-review | route to sub-agent to fix gaps |
+| `review_acknowledged` | bisset-review | user noted, stay idle |
+
+### User requests a project review
+
+Delegate to **bisset-review** at any time, regardless of current phase.
+Trigger phrases: "review the project", "audit", "check conformance", "is it done?",
+"verify", "health check".
 
 ### User asks about progress
 

@@ -191,6 +191,15 @@ def workflow_list_questions(answered: bool = None) -> dict:
 
 
 @mcp.tool()
+def workflow_run_tests(task_id: str) -> dict:
+    """Run the BDD test suite for a specific task. Executes the configured test runner
+    against the task's feature file, parses scenario pass/fail counts, stores the result,
+    and returns ok:true if coverage meets the threshold. Must be called before
+    workflow_accept_task_result when the task has acceptance_criteria."""
+    return client.call_tool('workflow_run_tests', {'task_id': task_id})
+
+
+@mcp.tool()
 def workflow_add_task(task_id: str, title: str, description: str = '', acceptance_criteria: str = '') -> dict:
     """Add a project-specific task with optional Gherkin acceptance criteria.
     Call this after workflow_freeze_spec to replace or augment generic tasks with tasks

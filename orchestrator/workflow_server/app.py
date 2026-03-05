@@ -131,6 +131,14 @@ def tool_next_task(req: ToolRequest):
     return _engine.next_task()
 
 
+@app.post('/tools/workflow_run_tests')
+def tool_run_tests(req: ToolRequest):
+    task_id = req.arguments.get('task_id', '')
+    if not task_id:
+        return {'error': 'task_id required'}
+    return _engine.run_tests(task_id)
+
+
 @app.post('/tools/workflow_accept_task_result')
 def tool_accept_task_result(req: ToolRequest):
     a = req.arguments
@@ -289,7 +297,13 @@ def _prompt_implementation_loop(answers: dict, project_name: str, phase: str) ->
     else:
         ac_block = ''
         if task.get('acceptance_criteria'):
-            ac_block = f"\n### Acceptance Criteria (Gherkin)\n```gherkin\n{task['acceptance_criteria']}\n```\n"
+            feature_path = _engine._feature_file_path(task['id']) or '(project_path not set)'
+            ac_block = (
+                f"\n### Acceptance Criteria (Gherkin)\n```gherkin\n{task['acceptance_criteria']}\n```\n"
+                f"\n> **Feature file**: `{feature_path}`\n"
+                f"> **Required before accepting**: call `workflow_run_tests(\"{task['id']}\")` "
+                f"and confirm `ok: true` before calling `workflow_accept_task_result`.\n"
+            )
         desc_block = f"\n**Description**: {task['description']}\n" if task.get('description') else ''
         task_section = f"""## Current task
 - **ID**: `{task['id']}`

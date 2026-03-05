@@ -35,6 +35,18 @@ class Storage:
             description TEXT, acceptance_criteria TEXT,
             PRIMARY KEY (id, session_id)
         )''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS task_test_runs (
+            id TEXT PRIMARY KEY,
+            task_id TEXT,
+            session_id TEXT,
+            run_at REAL,
+            passed INTEGER,
+            failed INTEGER,
+            total INTEGER,
+            coverage_pct REAL,
+            ok INTEGER,
+            runner_output TEXT
+        )''')
         # migrate existing DBs that lack the new columns
         for col in ('description', 'acceptance_criteria'):
             try:
@@ -177,3 +189,22 @@ class Storage:
         cur.execute('SELECT id, title, status, created_at, done_at, evidence, description, acceptance_criteria FROM tasks WHERE session_id=? ORDER BY created_at',
                     (self.sid,))
         return cur.fetchall()
+
+    # ── test runs ─────────────────────────────────────────────────────────────
+
+    def save_test_run(self, task_id: str, passed: int, failed: int, coverage_pct: float, ok: bool, runner_output: str):
+        run_id = str(uuid.uuid4())[:8]
+        self.conn.execute(
+            'INSERT INTO task_test_runs (id, task_id, session_id, run_at, passed, failed, total, coverage_pct, ok, runner_output) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            (run_id, task_id, self.sid, time.time(), passed, failed, passed + failed, coverage_pct, int(ok), runner_output),
+        )
+        self.conn.commit()
+        return run_id
+
+    def get_last_passing_run(self, task_id: str):
+        cur = self.conn.cursor()
+        cur.execute(
+            'SELECT id, passed, failed, total, coverage_pct, run_at FROM task_test_runs WHERE task_id=? AND session_id=? AND ok=1 ORDER BY run_at DESC LIMIT 1',
+            (task_id, self.sid),
+        )
+        return cur.fetchone()

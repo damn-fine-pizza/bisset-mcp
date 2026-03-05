@@ -180,6 +180,7 @@ def call_tool(mcp_session_data, tool, name):
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
+                await session.call_tool('workflow_new_session', {'name': name})
                 result = await session.call_tool(tool, {'project_meta': {'name': name}})
                 import json
                 content = result.content[0].text if result.content else '{}'
