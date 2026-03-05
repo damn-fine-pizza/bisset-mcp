@@ -108,15 +108,31 @@ class WorkflowEngine:
             logger.warning('switch_session: session %r not found', session_id)
             return {'error': f'session {session_id!r} not found'}
         self._load_phase()
+        sub_phase = self.storage.read_meta('sub_phase')
         row = self.storage.get_session(session_id)
-        logger.info('switch_session sid=%s phase=%s', session_id, self.phase)
-        return {'session_id': row[0], 'name': row[1], 'phase': self.phase}
+        logger.info('switch_session sid=%s phase=%s sub_phase=%s', session_id, self.phase, sub_phase)
+        return {'session_id': row[0], 'name': row[1], 'phase': self.phase, 'sub_phase': sub_phase}
 
     def list_sessions(self) -> list:
+        import json
         rows = self.storage.list_sessions()
         result = []
-        for sid, name, created_at, updated_at in rows:
-            result.append({'id': sid, 'name': name, 'created_at': created_at, 'updated_at': updated_at})
+        for sid, name, created_at, updated_at, phase_raw, sub_phase_raw, tasks_done, tasks_total, q_answered in rows:
+            phase = json.loads(phase_raw) if phase_raw else 'not_started'
+            sub_phase = json.loads(sub_phase_raw) if sub_phase_raw else None
+            result.append({
+                'id': sid,
+                'name': name,
+                'phase': phase,
+                'sub_phase': sub_phase,
+                'progress': {
+                    'tasks_done': tasks_done or 0,
+                    'tasks_total': tasks_total or 0,
+                    'questions_answered': q_answered or 0,
+                },
+                'updated_at': updated_at,
+                'created_at': created_at,
+            })
         logger.debug('list_sessions count=%d', len(result))
         return result
 

@@ -111,3 +111,69 @@ def t_id_after_reload(task_result, tid):
 def phase_after_reload(restarted_client, phase):
     r = restarted_client.post('/tools/workflow_get_state', json={'arguments': {}})
     assert r.json()['phase'] == phase
+
+
+# ── resume / list_sessions ────────────────────────────────────────────────────
+
+@given(parsers.parse('the phase has been advanced to "{target}"'))
+def advance_to_target(reload_state):
+    client = _reconnect_client(reload_state['db'])
+    sessions_r = client.post('/tools/workflow_list_sessions', json={'arguments': {}})
+    sessions = sessions_r.json().get('sessions', [])
+    if sessions:
+        client.post('/tools/workflow_switch_session', json={'arguments': {'session_id': sessions[0]['id']}})
+    client.post('/tools/workflow_advance_phase', json={'arguments': {'signal': 'requirements_valid'}})
+    reload_state['client_after_advance'] = client
+
+
+@when('I list all sessions', target_fixture='sessions_result')
+def list_sessions(reload_state):
+    client = reload_state.get('client_after_advance') or _reconnect_client(reload_state['db'])
+    r = client.post('/tools/workflow_list_sessions', json={'arguments': {}})
+    assert r.status_code == 200
+    sessions = r.json().get('sessions', [])
+    assert sessions, 'No sessions returned'
+    return sessions[0]  # most recent
+
+
+@then(parsers.parse('the session entry should include phase "{expected}"'))
+def session_has_phase(sessions_result, expected):
+    assert sessions_result.get('phase') == expected, (
+        f"Expected phase={expected!r}, got {sessions_result}")
+
+
+@then(parsers.parse('the session entry should include sub_phase "{expected}"'))
+def session_has_sub_phase(sessions_result, expected):
+    assert sessions_result.get('sub_phase') == expected, (
+        f"Expected sub_phase={expected!r}, got {sessions_result}")
+
+
+@then(parsers.parse('the session entry should include tasks_done {n:d}'))
+def session_tasks_done(sessions_result, n):
+    progress = sessions_result.get('progress', {})
+    assert progress.get('tasks_done') == n, f"Expected tasks_done={n}, got {progress}"
+
+
+@then('the session entry should include tasks_total greater than 0')
+def session_tasks_total(sessions_result):
+    progress = sessions_result.get('progress', {})
+    assert progress.get('tasks_total', 0) > 0, f"Expected tasks_total>0, got {progress}"
+
+
+@when('I switch to the current session', target_fixture='switch_result')
+def switch_current(reload_state):
+    client = _reconnect_client(reload_state['db'])
+    sessions_r = client.post('/tools/workflow_list_sessions', json={'arguments': {}})
+    sessions = sessions_r.json().get('sessions', [])
+    assert sessions
+    # advance so there's a non-null sub_phase to check
+    client.post('/tools/workflow_switch_session', json={'arguments': {'session_id': sessions[0]['id']}})
+    client.post('/tools/workflow_advance_phase', json={'arguments': {'signal': 'requirements_valid'}})
+    r = client.post('/tools/workflow_switch_session', json={'arguments': {'session_id': sessions[0]['id']}})
+    return r.json()
+
+
+@then(parsers.parse('the switch response should include sub_phase "{expected}"'))
+def switch_has_sub_phase(switch_result, expected):
+    assert switch_result.get('sub_phase') == expected, (
+        f"Expected sub_phase={expected!r}, got {switch_result}")

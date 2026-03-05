@@ -20,3 +20,22 @@ Feature: Backend Reload Without Data Loss
     Given the specification has been frozen
     When the workflow server is restarted
     Then the workflow phase should be "execution"
+
+  Scenario: list_sessions includes phase and sub_phase for resume
+    Given the specification has been frozen
+    And the phase has been advanced to "phase_3_architect"
+    When I list all sessions
+    Then the session entry should include phase "execution"
+    And the session entry should include sub_phase "phase_3_architect"
+
+  Scenario: list_sessions includes task progress for resume
+    Given the specification has been frozen
+    When I list all sessions
+    Then the session entry should include tasks_done 0
+    And the session entry should include tasks_total greater than 0
+
+  Scenario: switch_session returns sub_phase directly
+    Given the specification has been frozen
+    And the phase has been advanced to "phase_3_architect"
+    When I switch to the current session
+    Then the switch response should include sub_phase "phase_3_architect"

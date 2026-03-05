@@ -69,10 +69,17 @@ from `workflow_get_state()` after a sub-agent returns to determine the next step
 
 ### Resuming an existing session
 
-1. Call `workflow_list_sessions()` → show the list to the user.
-2. Ask which session to resume.
+1. Call `workflow_list_sessions()` → present the list as a table:
+
+   | ID | Project | Phase | Sub-phase | Tasks | Last active |
+   |---|---|---|---|---|---|
+   | `abc123` | MyApp | execution | phase_5_implement | 3/8 done | 2024-03-01 |
+
+2. Ask the user which session to resume (by ID or name).
 3. Call `workflow_switch_session(session_id=...)`.
-4. Call `workflow_get_state()` → read `sub_phase` and route per the table above.
+   The response includes `phase` and `sub_phase` — use them directly to route.
+4. Confirm to the user: *"Resuming 'MyApp' — currently at Phase 5 (implementation), task 3 of 8."*
+5. Route per the phase routing table above without calling `workflow_get_state()` again.
 
 ### After each sub-agent returns
 

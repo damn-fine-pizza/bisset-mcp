@@ -125,7 +125,20 @@ class Storage:
 
     def list_sessions(self):
         cur = self.conn.cursor()
-        cur.execute('SELECT id, name, created_at, updated_at FROM sessions ORDER BY created_at DESC')
+        cur.execute('''
+            SELECT s.id, s.name, s.created_at, s.updated_at,
+                   MAX(CASE WHEN m.k="phase" THEN m.v END) as phase,
+                   MAX(CASE WHEN m.k="sub_phase" THEN m.v END) as sub_phase,
+                   COUNT(DISTINCT CASE WHEN t.status="done" THEN t.id END) as tasks_done,
+                   COUNT(DISTINCT t.id) as tasks_total,
+                   COUNT(DISTINCT CASE WHEN q.answer IS NOT NULL THEN q.id END) as questions_answered
+            FROM sessions s
+            LEFT JOIN meta m ON m.session_id = s.id
+            LEFT JOIN tasks t ON t.session_id = s.id
+            LEFT JOIN questions q ON q.session_id = s.id
+            GROUP BY s.id
+            ORDER BY s.updated_at DESC
+        ''')
         return cur.fetchall()
 
     def get_session(self, session_id: str):
