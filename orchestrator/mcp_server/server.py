@@ -107,6 +107,16 @@ def workflow_switch_session(session_id: str) -> dict:
 
 
 @mcp.tool()
+def workflow_detect_session(cwd: str) -> dict:
+    """Detect and auto-switch to the Bisset session for a given project directory.
+    Pass the absolute path of the project you are working on.
+    If a matching session is found it is activated automatically.
+    If not, returns the list of available sessions so you can choose one manually
+    with workflow_switch_session() or start fresh with workflow_new_session()."""
+    return client.call_tool('workflow_detect_session', {'cwd': cwd})
+
+
+@mcp.tool()
 def workflow_start(project_meta: dict) -> dict:
     """Start a new workflow and seed the question catalog."""
     return client.call_tool('workflow_start', {'project_meta': project_meta})

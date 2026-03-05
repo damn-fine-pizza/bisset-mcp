@@ -75,6 +75,14 @@ def tool_switch_session(req: ToolRequest):
     return _engine.switch_session(session_id)
 
 
+@app.post('/tools/workflow_detect_session')
+def tool_detect_session(req: ToolRequest):
+    cwd = req.arguments.get('cwd', '')
+    if not cwd:
+        return {'error': 'cwd required'}
+    return _engine.detect_session(cwd)
+
+
 @app.post('/tools/workflow_list_sessions')
 def tool_list_sessions(req: ToolRequest):
     return {'sessions': _engine.list_sessions()}

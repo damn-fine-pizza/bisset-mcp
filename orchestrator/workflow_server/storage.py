@@ -165,6 +165,23 @@ class Storage:
         cur.execute('SELECT id, name, created_at, updated_at FROM sessions WHERE id=?', (session_id,))
         return cur.fetchone()
 
+    def find_sessions_by_project_path(self, project_path: str) -> list:
+        """Return sessions whose project_meta.project_path matches the given path."""
+        import json
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT session_id, v FROM meta WHERE k='project_meta'",
+        )
+        matches = []
+        for session_id, v in cur.fetchall():
+            try:
+                meta = json.loads(v) if isinstance(v, str) else v
+                if meta.get('project_path') == project_path:
+                    matches.append(session_id)
+            except Exception:
+                pass
+        return matches
+
     @property
     def sid(self):
         if not self._active_session_id:

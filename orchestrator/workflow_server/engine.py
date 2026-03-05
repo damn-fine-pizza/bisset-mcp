@@ -114,6 +114,35 @@ class WorkflowEngine:
         logger.info('switch_session sid=%s phase=%s sub_phase=%s', session_id, self.phase, sub_phase)
         return {'session_id': row[0], 'name': row[1], 'phase': self.phase, 'sub_phase': sub_phase}
 
+    def detect_session(self, cwd: str) -> dict:
+        """Find a session matching the given project path and auto-switch to it.
+        If multiple matches exist, switches to the most recently updated one.
+        If no match, returns the list of available sessions for manual selection."""
+        import os
+        cwd = os.path.abspath(cwd)
+        matches = self.storage.find_sessions_by_project_path(cwd)
+        if not matches:
+            sessions = self.list_sessions()
+            return {
+                'matched': False,
+                'cwd': cwd,
+                'message': (
+                    f'No session found for project path "{cwd}". '
+                    'Use workflow_switch_session(session_id) to resume an existing session '
+                    'or workflow_new_session() to start a new one.'
+                ),
+                'available_sessions': sessions,
+            }
+        # pick the most recently updated match
+        all_sessions = {s['id']: s for s in self.list_sessions()}
+        best = max(matches, key=lambda sid: all_sessions.get(sid, {}).get('updated_at', 0))
+        result = self.switch_session(best)
+        result['matched'] = True
+        result['cwd'] = cwd
+        if len(matches) > 1:
+            result['note'] = f'{len(matches)} sessions matched this path; switched to the most recent.'
+        return result
+
     def list_sessions(self) -> list:
         import json
         rows = self.storage.list_sessions()
