@@ -17,3 +17,6 @@ tasks:
   - id: t-006
     title: 'Prepare deployment manifests and CI/CD'
     done: false
+  - id: t-007
+    title: 'Beautify JSON logs (jq-style) and add WORKFLOW_PRETTY_JSON_LOGS toggle'
+    done: false
