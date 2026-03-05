@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # start.sh — BissetMCP unified launcher
 # Usage: ./start.sh {start|stop|restart|status|logs} [service]
-# service: all (default) | mcp-context | orchestrator | agent-<name>
+# service: all (default) | workflow-server
 #
 # Reads config from .env in this directory (copy .env.example and fill in).
 
@@ -20,25 +20,7 @@ if [[ -f "$ROOT/.env" ]]; then
   set +a
 fi
 
-OPENAI_API_KEY="${OPENAI_API_KEY:-}"
-LLM_MODEL="${LLM_MODEL:-gpt-4o-mini}"
-ORCHESTRATOR_PORT="${ORCHESTRATOR_PORT:-8080}"
 PYTHON="$HOME/.pyenv/versions/bisset-mcp/bin/python"
-
-# Ensure behave + coverage are installed in the virtualenv
-"$PYTHON" -m pip install -q behave coverage 2>/dev/null || true
-
-# ── agent port map ────────────────────────────────────────────────────────────
-declare -A AGENT_PORTS=(
-  [sw-architect]=8101
-  [product-owner]=8102
-  [senior-developer]=8103
-  [senior-frontend-developer]=8104
-  [senior-database-engineer]=8105
-  [senior-qa-engineer]=8106
-  [ux-designer-senior]=8107
-  [senior-product-manager]=8108
-)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 pidfile() { echo "$RUNDIR/$1.pid"; }
@@ -79,50 +61,18 @@ start_workflow_server() {
   echo "  $name started (pid $!)"
 }
 
-start_orchestrator() {
-  local name="orchestrator"
+start_mcp_server() {
+  local name="mcp-server"
   if is_running "$name"; then echo "  $name already running" ; return; fi
-  local dir="$ROOT/orchestrator/orchestrator"
-
-  # build AGENT_*_URL env vars pointing to localhost
-  local agent_env=""
-  for agent_name in "${!AGENT_PORTS[@]}"; do
-    local port="${AGENT_PORTS[$agent_name]}"
-    local key="AGENT_${agent_name^^}_URL"
-    key="${key//-/_}"
-    agent_env="$agent_env $key=http://localhost:$port/webhook"
-  done
+  local dir="$ROOT/orchestrator"
 
   echo "  installing deps for $name..."
-  (cd "$dir" && "$PYTHON" -m pip install -q -r requirements.txt)
-  echo "  starting $name → $(logfile "$name")"
+  (cd "$dir" && "$PYTHON" -m pip install -q -r mcp_server/requirements.txt)
+  echo "  starting $name on stdio → $(logfile "$name")"
   setsid env \
-    MCP_URL="http://localhost:8080" \
-    BISSET_PYTHON="$PYTHON" \
-    $agent_env \
-    sh -c "cd '$dir' && '$PYTHON' app.py" > "$(logfile "$name")" 2>&1 < /dev/null &
+    sh -c "cd '$dir' && '$PYTHON' -m orchestrator.mcp_server" > "$(logfile "$name")" 2>&1 < /dev/null &
   echo $! > "$(pidfile "$name")"
   echo "  $name started (pid $!)"
-}
-
-start_agent() {
-  local agent_name="$1"           # e.g. sw-architect
-  local service="agent-$agent_name"
-  local port="${AGENT_PORTS[$agent_name]}"
-  if is_running "$service"; then echo "  $service already running" ; return; fi
-  local dir="$ROOT/orchestrator/agents/$service"
-  if [[ ! -d "$dir" ]]; then echo "  WARNING: $dir not found, skipping"; return; fi
-
-  echo "  installing deps for $service..."
-  (cd "$dir" && "$PYTHON" -m pip install -q -r requirements.txt)
-  echo "  starting $service on :$port → $(logfile "$service")"
-  setsid env \
-    OPENAI_API_KEY="$OPENAI_API_KEY" \
-    LLM_MODEL="$LLM_MODEL" \
-    PORT="$port" \
-    sh -c "cd '$dir' && '$PYTHON' app.py" > "$(logfile "$service")" 2>&1 < /dev/null &
-  echo $! > "$(pidfile "$service")"
-  echo "  $service started (pid $!)"
 }
 
 # ── commands ──────────────────────────────────────────────────────────────────
@@ -131,13 +81,11 @@ cmd_start() {
   echo "==> start [$target]"
   if [[ "$target" == "all" ]]; then
     start_workflow_server
-    start_orchestrator
-    for a in "${!AGENT_PORTS[@]}"; do start_agent "$a"; done
-  elif [[ "$target" == "orchestrator" ]]; then
-    start_orchestrator
-  elif [[ "$target" == agent-* ]]; then
-    local agent_name="${target#agent-}"
-    start_agent "$agent_name"
+    start_mcp_server
+  elif [[ "$target" == "workflow-server" ]]; then
+    start_workflow_server
+  elif [[ "$target" == "mcp-server" ]]; then
+    start_mcp_server
   else
     echo "Unknown service: $target"; exit 1
   fi
@@ -148,10 +96,7 @@ cmd_stop() {
   echo "==> stop [$target]"
   if [[ "$target" == "all" ]]; then
     stop_service "workflow-server"
-    for svc in orchestrator; do stop_service "$svc"; done
-    for a in "${!AGENT_PORTS[@]}"; do stop_service "agent-$a"; done
-  elif [[ "$target" == "mcp-context" ]]; then
-    stop_service "mcp-context"
+    stop_service "mcp-server"
   else
     stop_service "$target"
   fi
@@ -159,17 +104,7 @@ cmd_stop() {
 
 cmd_status() {
   echo "==> status"
-  for svc in workflow-server orchestrator; do
-    local pf
-    pf="$(pidfile "$svc")"
-    if is_running "$svc"; then
-      echo "  ✓ $svc  (pid $(cat "$pf"))"
-    else
-      echo "  ✗ $svc"
-    fi
-  done
-  for a in "${!AGENT_PORTS[@]}"; do
-    local svc="agent-$a"
+  for svc in workflow-server mcp-server; do
     local pf
     pf="$(pidfile "$svc")"
     if is_running "$svc"; then
@@ -213,7 +148,7 @@ case "$COMMAND" in
   logs)    cmd_logs    "$EXTRA" ;;
   *)
     echo "Usage: $0 {start|stop|restart|status|logs} [service|all]"
-    echo "Services: mcp-context  orchestrator  agent-<name>"
+    echo "Services: workflow-server  mcp-server"
     echo "          all (default when omitted)"
     exit 2
     ;;
