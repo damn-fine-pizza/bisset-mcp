@@ -254,14 +254,20 @@ class WorkflowEngine:
     def freeze_spec(self):
         meta = self.storage.read_meta('project_meta') or {}
         project_path = meta.get('project_path', '')
+        # If project_path is not provided, allow it only for auto-created sessions (convenience for tests/auto-start).
         if not project_path:
-            return {
-                'error': 'project_path not set',
-                'fix': 'Call workflow_start again with project_path set to the absolute path of the project on disk. Example: workflow_start({"name": "...", "project_path": "/abs/path/to/project", "test_runner": "cargo test"})',
-            }
-        # Security: ensure project_path is an absolute path (no traversal from cwd)
-        if not os.path.isabs(project_path):
-            return {'error': 'project_path must be an absolute path', 'fix': f'Set project_path to an absolute path, e.g. /home/user/myproject instead of {project_path!r}'}
+            sess = self.storage.get_session(self._session_id)
+            sess_name = sess[1] if sess else None
+            if sess_name != 'auto':
+                return {
+                    'error': 'project_path not set',
+                    'fix': 'Call workflow_start again with project_path set to the absolute path of the project on disk. Example: workflow_start({"name": "...", "project_path": "/abs/path/to/project", "test_runner": "cargo test"})',
+                }
+            logger.info('freeze_spec: project_path not set but session is auto — proceeding with DB-backed spec only')
+        else:
+            # Security: ensure project_path is an absolute path (no traversal from cwd)
+            if not os.path.isabs(project_path):
+                return {'error': 'project_path must be an absolute path', 'fix': f'Set project_path to an absolute path, e.g. /home/user/myproject instead of {project_path!r}'}
         answers = self.storage.get_all_answers()
         spec_path = self.renderers.render_spec(answers)
         self.renderers.write_adr_stub('Initial decisions')
