@@ -251,6 +251,26 @@ def tool_get_events(req: ToolRequest):
     return _engine.get_events(limit=int(a.get('limit', 50)))
 
 
+@app.post('/tools/workflow_store_note')
+def tool_store_note(req: ToolRequest):
+    if err := _require_session(): return err
+    a = req.arguments
+    key = a.get('key')
+    content = a.get('content', '')
+    if not key:
+        return {'error': 'key required'}
+    return _engine.store_note(key, content)
+
+
+@app.post('/tools/workflow_tick')
+def tool_workflow_tick(req: ToolRequest):
+    # workflow_tick is the deterministic driver — returns the single next action
+    if not _storage._active_session_id:
+        # allow caller to create a session via the driver
+        return {'type': 'need_tool', 'reason': 'no_active_session', 'tool': 'workflow_new_session', 'args': {'name': 'auto'}}
+    return _engine.workflow_tick()
+
+
 # ─── Resources ───────────────────────────────────────────────────────────────
 
 @app.get('/resources/{name}')
@@ -325,7 +345,39 @@ def _build_prompt(name: str) -> str | None:
     if name == 'roles/build_engineer':
         return _prompt_role('Build Engineer', project_name, answers, phase,
             'Maintain CI/CD pipelines, Docker/deployment manifests, dependency management.')
+    if name == 'roles/requirements_validate':
+        return _prompt_requirements_validate(answers)
     return None
+
+
+def _prompt_requirements_validate(answers: dict) -> str:
+    """Produce a strict, machine-parseable validation report.
+
+    Output MUST follow this format exactly:
+
+    DECISION: <requirements_valid|requirements_incomplete>
+    CLOSED_QUESTIONS:
+    - Q1: ...
+    - Q2: ...
+    NOTES:
+    - ...
+    """
+    # Simple deterministic validator: if any unanswered question exists, mark incomplete
+    unanswered = [qid for qid, (_, ans) in sorted(answers.items()) if not ans]
+    if unanswered:
+        decision = 'requirements_incomplete'
+    else:
+        decision = 'requirements_valid'
+    lines = [f'DECISION: {decision}', 'CLOSED_QUESTIONS:']
+    for qid, (text, ans) in sorted(answers.items()):
+        lines.append(f'- {qid}: {text}')
+    lines.append('NOTES:')
+    if unanswered:
+        lines.append('- Some questions are unanswered; re-run the interview to collect missing answers.')
+    else:
+        lines.append('- All questions answered. Requirements validated.')
+    return '\n'.join(lines)
+
 
 
 def _qa_block(answers: dict) -> str:

@@ -252,8 +252,16 @@ class WorkflowEngine:
         return {'proposals': [{'paradigm': r[0], 'content': r[1], 'created_at': r[2]} for r in rows]}
 
     def freeze_spec(self):
-        # Persist spec, ADR stub and plan into DB; do not require a project_path because
-        # artifacts are stored in session-scoped meta now.
+        meta = self.storage.read_meta('project_meta') or {}
+        project_path = meta.get('project_path', '')
+        if not project_path:
+            return {
+                'error': 'project_path not set',
+                'fix': 'Call workflow_start again with project_path set to the absolute path of the project on disk. Example: workflow_start({"name": "...", "project_path": "/abs/path/to/project", "test_runner": "cargo test"})',
+            }
+        # Security: ensure project_path is an absolute path (no traversal from cwd)
+        if not os.path.isabs(project_path):
+            return {'error': 'project_path must be an absolute path', 'fix': f'Set project_path to an absolute path, e.g. /home/user/myproject instead of {project_path!r}'}
         answers = self.storage.get_all_answers()
         spec_path = self.renderers.render_spec(answers)
         self.renderers.write_adr_stub('Initial decisions')
@@ -699,3 +707,93 @@ class WorkflowEngine:
             return {'error': 'No active session'}
         events = self.storage.get_events(limit)
         return {'events': events, 'count': len(events)}
+
+    # ── lightweight helpers ──────────────────────────────────────────────────
+
+    def store_note(self, key: str, content: str) -> dict:
+        """Persist an arbitrary note in session-scoped meta under 'note:<key>'."""
+        if not self._session_id:
+            return {'error': 'No active session'}
+        self.storage.write_meta(f'note:{key}', {'content': content, 'ts': time.time()})
+        logger.info('store_note key=%s', key)
+        return {'ok': True, 'key': key}
+
+    def workflow_tick(self) -> dict:
+        """Deterministic driver that returns the single next action the client must perform.
+
+        Returns a JSON command with the schema described in project docs.
+        """
+        # Session required
+        if not self.storage._active_session_id:
+            return {
+                'type': 'need_tool',
+                'reason': 'no_active_session',
+                'tool': 'workflow_new_session',
+                'args': {'name': 'auto'},
+            }
+        # Load phase/sub_phase
+        phase = self.storage.read_meta('phase') or 'interview'
+        sub = self.storage.read_meta('sub_phase')
+
+        # Phase: interview — ask next closed question
+        if phase == 'interview':
+            nq = self.next_question()
+            if nq.get('done'):
+                return {
+                    'type': 'need_tool',
+                    'reason': 'questions_completed',
+                    'tool': 'workflow_freeze_spec',
+                    'args': {},
+                }
+            return {
+                'type': 'need_user_input',
+                'reason': 'answer_next_question',
+                'question': {'id': nq['id'], 'text': nq['text']},
+                'submit_via_tool': 'workflow_record_answer',
+                'submit_args_schema': {'question_id': nq['id'], 'answer_text': '...'},
+            }
+
+        # Phase: execution — may be in requirements validation sub-phase or implementation
+        if phase == 'execution':
+            if sub == 'phase_2_5_requirements':
+                unanswered = self.storage.list_unanswered()
+                if unanswered:
+                    qid, text = unanswered[0]
+                    return {
+                        'type': 'need_user_input',
+                        'reason': 'requirements_incomplete_question',
+                        'question': {'id': qid, 'text': text},
+                        'submit_via_tool': 'workflow_record_answer',
+                        'submit_args_schema': {'question_id': qid, 'answer_text': '...'},
+                    }
+                # all answered — advance phase deterministically
+                return {
+                    'type': 'need_tool',
+                    'reason': 'requirements_valid',
+                    'tool': 'workflow_advance_phase',
+                    'args': {'signal': 'requirements_valid'},
+                }
+            # Normal implementation loop
+            nt = self.next_task()
+            if nt.get('done'):
+                return {'type': 'done', 'reason': 'no_pending_tasks'}
+            if 'error' in nt:
+                return {'type': 'error', 'reason': nt['error']}
+            # Return a deterministic LLM-driven implementation instruction
+            return {
+                'type': 'need_llm_step',
+                'reason': 'implement_task',
+                'prompt_name': 'phases/implementation_loop',
+                'task': {'id': nt['id'], 'title': nt['title'], 'details': nt.get('description', '')},
+                'expected': [
+                    {'tool': 'workflow_accept_task_result', 'args': {'task_id': nt['id'], 'summary': '...', 'artifacts_changed': [], 'tests_run': [], 'test_results': {}}}
+                ],
+            }
+
+        # Phase: done
+        if phase == 'done':
+            return {'type': 'done', 'reason': 'workflow_complete'}
+
+        # Fallback — instruct to fetch state
+        return {'type': 'need_tool', 'reason': 'unknown_state', 'tool': 'workflow_get_state', 'args': {}}
+

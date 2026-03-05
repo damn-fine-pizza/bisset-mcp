@@ -267,6 +267,18 @@ def workflow_status() -> dict:
 
 
 @mcp.tool()
+def workflow_store_note(key: str, content: str) -> dict:
+    """Store an arbitrary note in session meta (key, content)."""
+    return client.call_tool('workflow_store_note', {'key': key, 'content': content})
+
+
+@mcp.tool()
+def workflow_tick() -> dict:
+    """Call the deterministic driver and return the single next action the client must perform."""
+    return client.call_tool('workflow_tick', {})
+
+
+@mcp.tool()
 def workflow_bootstrap_project(cwd: str, autodetect: bool = True) -> dict:
     """Auto-detect project type from a directory and populate project_meta.
     Detects: Cargo.toml (Rust), pyproject.toml (Python), package.json (Node),
