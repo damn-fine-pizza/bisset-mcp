@@ -23,35 +23,119 @@ Copilot CLI (or any MCP client)
 - **`mcp_server`** — thin STDIO proxy; exposes all workflow operations as MCP tools and prompts.
 - **`workflow_server`** — stateful HTTP backend; owns the SQLite DB, the BDD runner, and all business logic.
 
-## Agent hierarchy
+## Agent call graph
+
+### Full call graph — all cases
 
 ```mermaid
 flowchart TD
-    User((User)) --> bisset
+    User((User)) -->|invokes| bisset
 
-    bisset -->|Phase 2| bi[bisset-interview]
-    bisset -->|Phase 2.5| br[bisset-requirements]
-    bisset -->|Phase 3| ba[bisset-architect]
-    bisset -->|Phase 4 & 6| btg[bisset-test-gherkin]
-    bisset -->|Phase 5| bim[bisset-implement]
-    bisset -->|Any phase| brev[bisset-review]
+    %% ── Phase 2 ──────────────────────────────────────────────────────────────
+    subgraph P2["⬜ Phase 2 — Requirements Interview"]
+        bi[bisset-interview]
+    end
 
-    ba --> ba_oop[bisset-architect-oop]
-    ba --> ba_fn[bisset-architect-functional]
-    ba --> ba_dod[bisset-architect-dataoriented]
-    ba --> br
+    %% ── Phase 2.5 ────────────────────────────────────────────────────────────
+    subgraph P25["⬜ Phase 2.5 — Requirements Validation"]
+        br[bisset-requirements]
+        brv[bisset-requirements-validate]
+        br -->|Mode 1: validate| brv
+    end
 
-    brev --> br
+    %% ── Phase 3 ──────────────────────────────────────────────────────────────
+    subgraph P3["⬜ Phase 3 — Architecture"]
+        ba[bisset-architect]
+        oop[bisset-architect-oop]
+        fn[bisset-architect-functional]
+        dod[bisset-architect-dataoriented]
+        br2[bisset-requirements]
+        ba -->|1 sequential| oop
+        ba -->|2 sequential| fn
+        ba -->|3 sequential| dod
+        ba -->|Mode 2: traceability| br2
+    end
 
-    bim --> bback[bisset-backend]
-    bim --> bfront[bisset-frontend]
-    bim --> bemb[bisset-embedded]
-    bim --> bux[bisset-ux]
-    bim --> bdb[bisset-database]
-    bim --> bcloud[bisset-cloud]
-    bim --> bdevops[bisset-devops]
-    bim --> bdocs[bisset-docs]
-    bdocs --> bux
+    %% ── Phase 4 ──────────────────────────────────────────────────────────────
+    subgraph P4["⬜ Phase 4 — Gherkin Generation"]
+        btg[bisset-test-gherkin]
+    end
+
+    %% ── Phase 5 ──────────────────────────────────────────────────────────────
+    subgraph P5["⬜ Phase 5 — Implementation"]
+        bim[bisset-implement]
+        bback[bisset-backend]
+        bfront[bisset-frontend]
+        bemb[bisset-embedded]
+        bux[bisset-ux]
+        bdb[bisset-database]
+        bcloud[bisset-cloud]
+        bdevops[bisset-devops]
+        bdocs[bisset-docs]
+        bim -->|per task: domain routing| bback & bfront & bemb & bux & bdb & bcloud & bdevops
+        bim -->|all tasks done| bdocs
+        bdocs -->|user flows| bux
+    end
+
+    %% ── Phase 6 ──────────────────────────────────────────────────────────────
+    subgraph P6["⬜ Phase 6 — Coverage Gate"]
+        btg2[bisset-test-gherkin]
+    end
+
+    %% ── Review ───────────────────────────────────────────────────────────────
+    subgraph REV["⬜ Review — any time"]
+        brev[bisset-review]
+        br3[bisset-requirements]
+        bre[bisset-requirements-extract]
+        brev -->|no requirements found| br3
+        br3 -->|Mode 3: extraction| bre
+    end
+
+    %% ── bisset → phases ──────────────────────────────────────────────────────
+    bisset -->|phase_2_interview| bi
+    bisset -->|phase_2_5_requirements| br
+    bisset -->|phase_3_architect| ba
+    bisset -->|phase_4_gherkin| btg
+    bisset -->|phase_5_implement| bim
+    bisset -->|phase_6_coverage| btg2
+    bisset -->|user request| brev
+
+    %% ── signals back to bisset ───────────────────────────────────────────────
+    bi -->|interview_complete| bisset
+    brv -->|requirements_valid| bisset
+    brv -->|requirements_incomplete| bisset
+    ba -->|tasks_ready| bisset
+    btg -->|features_written| bisset
+    bim -->|implementation_complete| bisset
+    brev -->|report complete| bisset
+
+    %% ── loops ────────────────────────────────────────────────────────────────
+    bisset -->|"⟳ requirements_incomplete"| bi
+    btg2 -->|"⟳ coverage_failed → phase_5_implement"| bim
+    btg2 -->|coverage_passed ✓| DONE((✅ done))
+```
+
+### Sub-phase state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> phase_2_interview : workflow_freeze_spec()
+
+    phase_2_interview --> phase_2_5_requirements : interview_complete\n(bisset-interview)
+
+    phase_2_5_requirements --> phase_3_architect : requirements_valid\n(bisset-requirements-validate)
+    phase_2_5_requirements --> phase_2_interview : requirements_incomplete\n(bisset-requirements-validate)
+
+    phase_3_architect --> phase_4_gherkin : tasks_ready\n(bisset-architect)
+
+    phase_4_gherkin --> phase_5_implement : features_written\n(bisset-test-gherkin)
+
+    phase_5_implement --> phase_6_coverage : implementation_complete\n(bisset-implement)
+
+    phase_6_coverage --> done : coverage_passed\n(bisset-test-gherkin)
+    phase_6_coverage --> phase_5_implement : coverage_failed\n(bisset-test-gherkin)
+
+    done --> [*]
 ```
 
 ### Phase sequence
