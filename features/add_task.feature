@@ -21,6 +21,12 @@ Feature: Add Project-Specific Task
     And I request the next task
     Then the task id should be "custom-003"
 
+  Scenario: Add a task with negative acceptance criteria
+    Given the specification has been frozen
+    When I add a task with id "custom-004" and title "Stats edge" and negative criteria "Given the player is idle\nWhen the stats are requested\nThen an empty result is returned"
+    Then the task list should contain "custom-004"
+    And the task "custom-004" should have negative_acceptance_criteria set
+
   Scenario: workflow_add_task requires an active session
     Given no session is active
     When I add a task with id "orphan-001" and title "No session task"

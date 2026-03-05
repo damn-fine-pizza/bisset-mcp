@@ -79,6 +79,24 @@ def task_has_ac(workflow_client, tid):
     assert tasks[tid].get('acceptance_criteria'), f'acceptance_criteria empty for {tid}'
 
 
+@when(parsers.parse('I add a task with id "{tid}" and title "{title}" and negative criteria "{nac}"'), target_fixture='add_result')
+def add_task_with_nac(workflow_client, tid, title, nac):
+    r = workflow_client.post('/tools/workflow_add_task', json={'arguments': {
+        'task_id': tid, 'title': title, 'negative_acceptance_criteria': nac.replace('\\n', '\n')
+    }})
+    assert r.status_code == 200
+    return r.json()
+
+
+@then(parsers.parse('the task "{tid}" should have negative_acceptance_criteria set'))
+def task_has_nac(workflow_client, tid):
+    r = workflow_client.post('/tools/workflow_list_tasks', json={'arguments': {}})
+    tasks = {t['id']: t for t in r.json()['tasks']}
+    assert tid in tasks
+    assert tasks[tid].get('negative_acceptance_criteria'), (
+        f'negative_acceptance_criteria empty for {tid}')
+
+
 @when('I request the next task', target_fixture='task_result')
 def next_task(workflow_client):
     r = workflow_client.post('/tools/workflow_next_task', json={'arguments': {}})
