@@ -18,6 +18,11 @@ the current project is in and delegate to the correct specialist sub-agent.
 
 ## Decision logic
 
+### User wants to generate Gherkin feature files
+
+Delegate directly to **bisset-test-gherkin**.
+This can happen at any time — before, during, or after a Bisset workflow.
+
 ### No active session / user wants to start fresh
 
 1. Ask the user for the project name and a one-line description.

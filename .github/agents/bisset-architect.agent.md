@@ -12,7 +12,6 @@ tools:
   - workflow_list_tasks
   - workflow_get_state
   - workflow_report
-  - agent
 ---
 
 You are the **Bisset architect**. Your job is to translate the frozen spec into a
@@ -58,7 +57,7 @@ Rules:
 - Cover at least one happy path and one error/edge case per task.
 - Steps must be observable and unambiguous — no vague assertions.
 - If a task is too large to test in one feature, split it into smaller tasks.
-- Use `agent` to invoke **test-gherkin** if you need help generating thorough scenarios.
+- Use `agent` to invoke **bisset-test-gherkin** for thorough scenario generation if needed — but only via the **bisset** dispatcher, not directly.
 
 ## Confirmation
 

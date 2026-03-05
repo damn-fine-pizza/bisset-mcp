@@ -1,5 +1,5 @@
 ---
-name: test-gherkin
+name: bisset-test-gherkin
 description: >
   Generates Gherkin feature files from project descriptions, requirements, and existing
   code. Applies ISTQB test design techniques (equivalence partitioning, boundary value
