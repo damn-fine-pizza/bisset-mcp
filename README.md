@@ -23,6 +23,75 @@ Copilot CLI (or any MCP client)
 - **`mcp_server`** — thin STDIO proxy; exposes all workflow operations as MCP tools and prompts.
 - **`workflow_server`** — stateful HTTP backend; owns the SQLite DB, the BDD runner, and all business logic.
 
+## Agent hierarchy
+
+```mermaid
+flowchart TD
+    User((User)) --> bisset
+
+    bisset -->|Phase 2| bi[bisset-interview]
+    bisset -->|Phase 2.5| br[bisset-requirements]
+    bisset -->|Phase 3| ba[bisset-architect]
+    bisset -->|Phase 4 & 6| btg[bisset-test-gherkin]
+    bisset -->|Phase 5| bim[bisset-implement]
+    bisset -->|Any phase| brev[bisset-review]
+
+    ba --> ba_oop[bisset-architect-oop]
+    ba --> ba_fn[bisset-architect-functional]
+    ba --> ba_dod[bisset-architect-dataoriented]
+    ba --> br
+
+    brev --> br
+
+    bim --> bback[bisset-backend]
+    bim --> bfront[bisset-frontend]
+    bim --> bemb[bisset-embedded]
+    bim --> bux[bisset-ux]
+    bim --> bdb[bisset-database]
+    bim --> bcloud[bisset-cloud]
+    bim --> bdevops[bisset-devops]
+```
+
+### Phase sequence
+
+```
+Phase 1   → bisset           session creation
+Phase 2   → bisset-interview requirements interview
+Phase 2.5 → bisset-requirements validate completeness / consistency / testability
+              └─ requirements_incomplete → loop back to Phase 2
+Phase 3   → bisset-architect  evaluate OOP / Functional / Data-Oriented proposals
+              ├─ bisset-architect-{oop,functional,dataoriented}  produce proposals
+              └─ bisset-requirements  cross-check architectural coverage
+Phase 4   → bisset-test-gherkin  generate {task}.feature + {task}.negative.feature
+Phase 5   → bisset-implement  implement task by task via domain specialists
+Phase 6   → bisset-test-gherkin  run full BDD suite, gate on > 80% coverage
+              └─ coverage_failed → loop back to Phase 5
+Review    → bisset-review     conformance audit (any time)
+              └─ no requirements? → bisset-requirements extracts them from code
+```
+
+### Agent table
+
+| Agent | Phase | user-invocable | Parent | Key tools |
+|---|---|---|---|---|
+| `bisset` | dispatcher | ✅ | — | agent, workflow_get_state |
+| `bisset-interview` | 2 | ❌ | bisset | workflow tools |
+| `bisset-requirements` | 2.5 / 3 / review | ❌ | bisset, bisset-architect, bisset-review | workflow_advance_phase, workflow_store_proposal |
+| `bisset-architect` | 3 | ❌ | bisset | agent, workflow_advance_phase, workflow_list_proposals |
+| `bisset-architect-oop` | 3 | ❌ | bisset-architect | workflow_store_proposal |
+| `bisset-architect-functional` | 3 | ❌ | bisset-architect | workflow_store_proposal |
+| `bisset-architect-dataoriented` | 3 | ❌ | bisset-architect | workflow_store_proposal |
+| `bisset-test-gherkin` | 4, 6 | ❌ | bisset | workflow_advance_phase, workflow_add_task |
+| `bisset-implement` | 5 | ❌ | bisset | agent, workflow_advance_phase, workflow_run_tests |
+| `bisset-backend` | 5 | ❌ | bisset-implement | read, edit, execute |
+| `bisset-frontend` | 5 | ❌ | bisset-implement | read, edit, execute |
+| `bisset-embedded` | 5 | ❌ | bisset-implement | read, edit, execute |
+| `bisset-ux` | 5 | ❌ | bisset-implement | read, edit |
+| `bisset-database` | 5 | ❌ | bisset-implement | read, edit, execute |
+| `bisset-cloud` | 5 | ❌ | bisset-implement | read, edit, execute |
+| `bisset-devops` | 5 | ❌ | bisset-implement | read, edit, execute |
+| `bisset-review` | any | ❌ | bisset | agent, execute, workflow_list_tasks |
+
 ## Tools exposed to the assistant
 
 | Tool | Description |
@@ -33,6 +102,7 @@ Copilot CLI (or any MCP client)
 | `workflow_next_question` | Get the next unanswered question |
 | `workflow_record_answer` | Record an answer |
 | `workflow_freeze_spec` | Lock the spec and generate work breakdown |
+| `workflow_advance_phase` | Emit a signal to advance the workflow sub-phase |
 | `workflow_next_task` | Get the current pending task (with Gherkin criteria) |
 | `workflow_add_task` | Add a project-specific task with Gherkin acceptance criteria |
 | `workflow_run_tests` | **Bisset runs the BDD tests** — no self-reporting |
@@ -42,6 +112,8 @@ Copilot CLI (or any MCP client)
 | `workflow_list_sessions` | List all sessions |
 | `workflow_report` | Summary of current phase and progress |
 | `workflow_is_done` | Check if all tasks are complete |
+| `workflow_store_proposal` | Persist an architecture proposal for the session |
+| `workflow_list_proposals` | Retrieve stored architecture proposals |
 
 ## BDD enforcement
 
@@ -99,7 +171,9 @@ Pass these in `workflow_start` to enable BDD enforcement:
   "features_dir": "features",
   "test_runner": "pytest",
   "test_runner_args": ["--tb=short", "-q"],
-  "bdd_coverage_threshold": 80
+  "bdd_coverage_threshold": 80,
+  "use_line_coverage": true,
+  "line_coverage_threshold": 80
 }
 ```
 

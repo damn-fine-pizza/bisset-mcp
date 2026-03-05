@@ -8,6 +8,20 @@ from .catalog import Catalog
 
 logger = logging.getLogger('workflow-engine')
 
+# signal → (new_sub_phase, valid_from_sub_phases)
+SIGNAL_PHASES = {
+    # Phase 2.5 ↔ interview loop
+    'requirements_valid':      ('phase_3_architect',      {'phase_2_5_requirements'}),
+    'requirements_incomplete': ('phase_2_interview',      {'phase_2_5_requirements'}),
+    'interview_updated':       ('phase_2_5_requirements', {'phase_2_interview'}),
+    # Phase 3 → 4 → 5 → 6
+    'tasks_ready':             ('phase_4_gherkin',        {'phase_3_architect'}),
+    'features_written':        ('phase_5_implement',      {'phase_4_gherkin'}),
+    'implementation_complete': ('phase_6_coverage',       {'phase_5_implement'}),
+    'coverage_passed':         ('done',                   {'phase_6_coverage'}),
+    'coverage_failed':         ('phase_5_implement',      {'phase_6_coverage'}),
+}
+
 
 def _parse_bdd_output(output: str) -> tuple[int, int]:
     """Parse passed/failed scenario counts from behave, pytest, or cucumber output."""
@@ -39,6 +53,14 @@ def _parse_bdd_output(output: str) -> tuple[int, int]:
         return int(p.group(1)) if p else 0, int(f.group(1)) if f else 0
     return 0, 0
 
+
+def _parse_line_coverage(output: str) -> float | None:
+    """Parse TOTAL line coverage % from `coverage report` output."""
+    m = re.search(r'^TOTAL\s+\d+\s+\d+.*?(\d+)%\s*$', output, re.MULTILINE)
+    if m:
+        return float(m.group(1))
+    return None
+
 class WorkflowEngine:
     def __init__(self, storage: Storage, catalog: Catalog, renderers):
         self.storage = storage
@@ -61,6 +83,8 @@ class WorkflowEngine:
             'test_runner': meta.get('test_runner', 'behave'),
             'test_runner_args': meta.get('test_runner_args', ''),
             'bdd_coverage_threshold': float(meta.get('bdd_coverage_threshold', 80)),
+            'use_line_coverage': bool(meta.get('use_line_coverage', False)),
+            'line_coverage_threshold': float(meta.get('line_coverage_threshold', 80)),
         }
 
     def _feature_file_path(self, task_id: str, negative: bool = False) -> str | None:
@@ -122,6 +146,7 @@ class WorkflowEngine:
         return {
             'session_id': self._session_id,
             'phase': self.phase,
+            'sub_phase': self.storage.read_meta('sub_phase'),
             'answers_count': len(answers),
             'tasks_count': len(tasks),
             'project_meta': meta,
@@ -143,6 +168,35 @@ class WorkflowEngine:
         logger.info('record_answer qid=%s question=%r answer=%r', question_id, question_text, answer_text[:120] if answer_text else '')
         return {'ok': True, 'question_id': question_id}
 
+    def advance_phase(self, signal: str) -> dict:
+        if not self._session_id:
+            return {'error': 'No active session'}
+        if signal not in SIGNAL_PHASES:
+            return {'error': f'Unknown signal {signal!r}. Valid: {sorted(SIGNAL_PHASES)}'}
+        new_sub_phase, valid_from = SIGNAL_PHASES[signal]
+        current = self.storage.read_meta('sub_phase')
+        if current not in valid_from:
+            return {'error': f'Signal {signal!r} not valid from sub_phase={current!r}. Expected one of {sorted(valid_from)}'}
+        self.storage.write_meta('sub_phase', new_sub_phase)
+        if new_sub_phase == 'done':
+            self.storage.write_meta('phase', 'done')
+            self.phase = 'done'
+        logger.info('advance_phase signal=%s %s→%s', signal, current, new_sub_phase)
+        return {'ok': True, 'signal': signal, 'sub_phase': new_sub_phase}
+
+    def store_proposal(self, paradigm: str, content: str) -> dict:
+        if not self._session_id:
+            return {'error': 'No active session'}
+        proposal_id = self.storage.add_proposal(paradigm, content)
+        logger.info('store_proposal paradigm=%r id=%s', paradigm, proposal_id)
+        return {'ok': True, 'paradigm': paradigm, 'proposal_id': proposal_id}
+
+    def list_proposals(self) -> dict:
+        if not self._session_id:
+            return {'proposals': []}
+        rows = self.storage.list_proposals()
+        return {'proposals': [{'paradigm': r[0], 'content': r[1], 'created_at': r[2]} for r in rows]}
+
     def freeze_spec(self):
         answers = self.storage.get_all_answers()
         spec_path = self.renderers.render_spec(answers)
@@ -151,6 +205,7 @@ class WorkflowEngine:
         self.renderers.write_plan(tasks)
         self.storage.create_tasks(tasks)
         self.storage.write_meta('phase', 'execution')
+        self.storage.write_meta('sub_phase', 'phase_2_5_requirements')
         self.phase = 'execution'
         logger.info('freeze_spec spec=%s tasks=%d', spec_path, len(tasks))
         return {'spec_path': spec_path}
@@ -215,16 +270,27 @@ class WorkflowEngine:
                             f'`workflow_run_tests("{task_id}")` first and ensure all scenarios pass.'
                         )
                     }
-                _, passed, failed, total, coverage_pct, _ = passing_run
-                threshold = self._get_bdd_config()['bdd_coverage_threshold']
+                _, passed, failed, total, coverage_pct, line_coverage_pct, _ = passing_run
+                cfg = self._get_bdd_config()
+                threshold = cfg['bdd_coverage_threshold']
                 if coverage_pct < threshold:
                     logger.warning('accept_task_result blocked: task %s coverage %.1f%% < threshold %.1f%%', task_id, coverage_pct, threshold)
                     return {
                         'error': (
-                            f'Task {task_id!r} BDD coverage {coverage_pct:.1f}% is below threshold {threshold:.0f}%. '
+                            f'Task {task_id!r} BDD scenario coverage {coverage_pct:.1f}% is below threshold {threshold:.0f}%. '
                             f'Fix failing scenarios and run `workflow_run_tests("{task_id}")` again.'
                         )
                     }
+                if cfg['use_line_coverage'] and line_coverage_pct is not None:
+                    line_threshold = cfg['line_coverage_threshold']
+                    if line_coverage_pct < line_threshold:
+                        logger.warning('accept_task_result blocked: task %s line coverage %.1f%% < threshold %.1f%%', task_id, line_coverage_pct, line_threshold)
+                        return {
+                            'error': (
+                                f'Task {task_id!r} line coverage {line_coverage_pct:.1f}% is below threshold {line_threshold:.0f}%. '
+                                f'Add more scenarios to cover untested branches and run `workflow_run_tests("{task_id}")` again.'
+                            )
+                        }
         evidence = {'summary': summary, 'artifacts': artifacts_changed, 'tests_run': tests_run, 'test_results': test_results, 'ts': time.time()}
         self.storage.accept_task(task_id, evidence)
         all_done = self.storage.all_tasks_done()
@@ -256,6 +322,9 @@ class WorkflowEngine:
         if neg_path and os.path.exists(neg_path):
             cmd.append(neg_path)
             logger.info('run_tests including negative feature file %s', neg_path)
+        # wrap with coverage.py if requested
+        if cfg['use_line_coverage']:
+            cmd = ['coverage', 'run', '--branch', '-m'] + cmd
         logger.info('run_tests tid=%s cmd=%r', task_id, cmd)
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
@@ -269,11 +338,32 @@ class WorkflowEngine:
         total = passed + failed
         coverage_pct = (passed / total * 100) if total > 0 else 0.0
         threshold = cfg['bdd_coverage_threshold']
-        ok = coverage_pct >= threshold
-        run_id = self.storage.save_test_run(task_id, passed, failed, coverage_pct, ok, output[-4000:])
-        logger.info('run_tests tid=%s passed=%d failed=%d coverage=%.1f%% ok=%s run_id=%s',
-                    task_id, passed, failed, coverage_pct, ok, run_id)
-        return {
+        # optionally wrap with coverage.py for line coverage
+        line_coverage_pct = None
+        if cfg['use_line_coverage']:
+            try:
+                cov_result = subprocess.run(
+                    ['coverage', 'report'],
+                    capture_output=True, text=True, timeout=60,
+                    cwd=cfg['project_path'],
+                )
+                line_coverage_pct = _parse_line_coverage(cov_result.stdout + cov_result.stderr)
+                if line_coverage_pct is not None:
+                    logger.info('run_tests line coverage %.1f%%', line_coverage_pct)
+                else:
+                    logger.warning('run_tests: could not parse line coverage from coverage report output')
+            except FileNotFoundError:
+                logger.warning('run_tests: coverage tool not found — install with: pip install coverage')
+            except subprocess.TimeoutExpired:
+                logger.warning('run_tests: coverage report timed out')
+        line_threshold = cfg['line_coverage_threshold']
+        ok = coverage_pct >= threshold and (
+            not cfg['use_line_coverage'] or line_coverage_pct is None or line_coverage_pct >= line_threshold
+        )
+        run_id = self.storage.save_test_run(task_id, passed, failed, coverage_pct, ok, output[-4000:], line_coverage_pct)
+        logger.info('run_tests tid=%s passed=%d failed=%d coverage=%.1f%% line_cov=%s ok=%s run_id=%s',
+                    task_id, passed, failed, coverage_pct, line_coverage_pct, ok, run_id)
+        result_dict = {
             'ok': ok,
             'task_id': task_id,
             'run_id': run_id,
@@ -284,6 +374,10 @@ class WorkflowEngine:
             'threshold': threshold,
             'output': output[-2000:],
         }
+        if line_coverage_pct is not None:
+            result_dict['line_coverage_pct'] = round(line_coverage_pct, 1)
+            result_dict['line_coverage_threshold'] = line_threshold
+        return result_dict
 
     def report(self):
         tasks = self.storage.list_tasks()

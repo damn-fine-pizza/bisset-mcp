@@ -17,6 +17,7 @@ tools:
   - workflow_is_done
   - workflow_report
   - workflow_list_tasks
+  - workflow_advance_phase
 ---
 
 You are the **Bisset implementation orchestrator**. You receive tasks one at a time,
@@ -81,14 +82,15 @@ Call `workflow_report()`. Move to the next task.
 
 When `workflow_is_done()` returns `done: true`:
 - Call `workflow_report()` and display the implementation summary.
-- Return control to **bisset** with signal: `implementation_complete`.
+- Call `workflow_advance_phase("implementation_complete")`.
+- Return control to **bisset**.
 
 ## Called back for coverage fixes (Phase 6 loop)
 
 If the dispatcher returns here with signal `coverage_failed`:
 - Read the coverage report (failing scenarios + coverage %).
 - For each gap, delegate to the appropriate specialist to fix code or tests.
-- Return control to **bisset** with signal: `implementation_complete`.
+- Call `workflow_advance_phase("implementation_complete")` and return control to **bisset**.
 
 ## Rules
 

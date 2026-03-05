@@ -1,9 +1,10 @@
 ---
 name: bisset-test-gherkin
 description: >
-  Bisset sub-agent invoked in two phases: Phase 4 (generate .feature files for all
-  tasks after spec freeze) and Phase 6 (run full BDD suite, measure coverage, gate
-  on > 80% passing scenarios). Only invoked by the bisset dispatcher.
+  Bisset sub-agent invoked in two phases: Phase 4 (generate .feature and
+  .negative.feature files for all tasks after spec freeze) and Phase 6 (run full BDD
+  suite, measure coverage, gate on > 80% passing scenarios). Only invoked by the
+  bisset dispatcher.
 user-invocable: false
 tools:
   - read
@@ -13,6 +14,7 @@ tools:
   - workflow_add_task
   - workflow_list_tasks
   - workflow_get_state
+  - workflow_advance_phase
 ---
 
 # bisset-test-gherkin
@@ -45,7 +47,7 @@ to each task via `workflow_add_task`.
    negative_acceptance_criteria=<negative gherkin>)`
    to attach both Gherkin texts to the task record.
 6. Report to the user: tasks covered, scenario count per file, files written.
-7. Return control to **bisset** with signal: `features_written`.
+7. Call `workflow_advance_phase("features_written")` and return control to **bisset**.
 
 ### Positive vs Negative split
 
@@ -87,10 +89,9 @@ whether the project meets the 80% threshold.
 
 ### Decision
 
-**Coverage > threshold** → return control to **bisset** with signal: `coverage_passed`.
+**Coverage > threshold** → call `workflow_advance_phase("coverage_passed")` and return control to **bisset**.
 
-**Coverage ≤ threshold** → return control to **bisset** with signal: `coverage_failed`,
-including:
+**Coverage ≤ threshold** → call `workflow_advance_phase("coverage_failed")` and return control to **bisset**, including:
 - The coverage percentage achieved.
 - The list of failing scenarios.
 - For each failure: the feature file, scenario name, and failure message.
@@ -225,6 +226,14 @@ Before delivering output, verify:
    - [ ] Scenario count is justified; scenarios are not redundant
    - [ ] Decision Tables and Scenario Outlines are used where appropriate
    - [ ] Justification section explains why scenarios cannot be further merged
+
+6. **Coverage warning — scenario ≠ line coverage**:
+   > Scenario coverage (passed/total) is NOT the same as line or branch coverage.
+   > A suite where all scenarios pass can still leave large parts of the code untested.
+   > Design each scenario to exercise a **distinct code branch** — not just a distinct
+   > user story. For every branch, loop, exception handler, and guard clause in the
+   > implementation, there must be at least one scenario that forces execution through it.
+   > Use white-box knowledge of the implementation to target untested paths explicitly.
 
 6. **Pragmatism**:
    - [ ] Tests are deterministic and can run reliably in CI

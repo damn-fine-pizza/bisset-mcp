@@ -3,13 +3,15 @@ name: bisset-review
 description: >
   Bisset sub-agent for project conformance review. Verifies that the implementation
   matches the frozen spec, all tasks are complete, feature files exist for every task
-  with acceptance criteria, and BDD coverage exceeds 80%. Produces a structured
+  with acceptance criteria, and BDD coverage exceeds 80%. Can invoke bisset-requirements
+  to extract implicit requirements when none are documented. Produces a structured
   health report. Only invoked by the bisset dispatcher.
 user-invocable: false
 tools:
   - read
   - search
   - execute
+  - agent
   - workflow_get_state
   - workflow_list_tasks
   - workflow_list_questions
@@ -21,10 +23,23 @@ that tells the user whether the project is healthy across every dimension Bisset
 
 ## Review dimensions
 
-### 1 — Spec conformance
+### 1 — Requirements baseline
 
-Call `workflow_list_questions(answered=true)` to read all spec answers.
-Use `read` / `search` to scan the codebase for evidence that each answer is reflected
+Call `workflow_list_questions(answered=true)` to check if requirements are documented.
+
+**If questions are present**: use them as the requirements baseline for all checks below.
+
+**If no questions are present** (project was not started with Bisset, or requirements
+were never recorded):
+1. Invoke `agent("bisset-requirements", "extraction mode — no documented requirements")`.
+2. bisset-requirements reads the codebase and returns an extracted requirements document.
+3. Use the extracted requirements (marked by confidence level) as the baseline.
+4. Flag in the report: "Requirements derived from code analysis — not formally recorded."
+
+### 2 — Spec conformance
+
+Use the requirements baseline from step 1.
+Use `read` / `search` to scan the codebase for evidence that each requirement is reflected
 in the implementation.
 
 For each answer, classify:
@@ -32,15 +47,15 @@ For each answer, classify:
 - ⚠️ **Partial** — some evidence but incomplete
 - ❌ **Missing** — no evidence found
 
-### 2 — Task completion
+### 3 — Task completion
 
 Call `workflow_list_tasks()`. For each task report:
 - Status (`pending` / `done`)
-- Whether a `.feature` file exists for tasks with `acceptance_criteria`
+- Whether `.feature` and `.negative.feature` files exist for tasks with `acceptance_criteria`
   (path: `{project_path}/{features_dir}/{task_id}.feature`)
 - Whether evidence (`tests_run`, `artifacts_changed`) is present on done tasks
 
-### 3 — BDD coverage gate
+### 4 — BDD coverage gate
 
 Run the full test suite:
 
@@ -58,7 +73,7 @@ Parse the output:
 **If coverage > threshold (default 80%)** → BDD gate: ✅ PASS
 **If coverage ≤ threshold** → BDD gate: ❌ FAIL — list failing scenarios
 
-### 4 — Code quality signals
+### 5 — Code quality signals
 
 Read the project source tree and check for common quality signals:
 - Are there files with obvious TODOs or FIXME markers related to spec requirements?

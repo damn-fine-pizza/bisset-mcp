@@ -215,6 +215,38 @@ def workflow_add_task(task_id: str, title: str, description: str = '', acceptanc
     })
 
 
+@mcp.tool()
+def workflow_advance_phase(signal: str) -> dict:
+    """Advance the workflow sub-phase by emitting a signal.
+    Call this as the LAST action before returning control to the bisset dispatcher.
+    Valid signals and their transitions:
+      requirements_valid      → phase_2_5_requirements → phase_3_architect
+      requirements_incomplete → phase_2_5_requirements → phase_2_interview (re-interview)
+      interview_updated       → phase_2_interview      → phase_2_5_requirements
+      tasks_ready             → phase_3_architect      → phase_4_gherkin
+      features_written        → phase_4_gherkin        → phase_5_implement
+      implementation_complete → phase_5_implement      → phase_6_coverage
+      coverage_passed         → phase_6_coverage       → done
+      coverage_failed         → phase_6_coverage       → phase_5_implement (loop)"""
+    return client.call_tool('workflow_advance_phase', {'signal': signal})
+
+
+@mcp.tool()
+def workflow_store_proposal(paradigm: str, content: str) -> dict:
+    """Persist an architecture proposal for the current session.
+    paradigm: one of 'oop', 'functional', 'data-oriented' (or any label).
+    content: full Markdown proposal text including self-assessment scores.
+    Called by bisset-architect-* sub-agents before returning to bisset-architect."""
+    return client.call_tool('workflow_store_proposal', {'paradigm': paradigm, 'content': content})
+
+
+@mcp.tool()
+def workflow_list_proposals() -> dict:
+    """Retrieve all stored architecture proposals for the current session.
+    Called by bisset-architect to gather the three proposals for scoring and synthesis."""
+    return client.call_tool('workflow_list_proposals', {})
+
+
 def main():
     if not client.health():
         logger.warning(

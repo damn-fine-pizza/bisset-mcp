@@ -7,6 +7,7 @@ user-invocable: false
 tools:
   - read
   - search
+  - workflow_store_proposal
 ---
 
 You are the **Functional Architecture Specialist** for the Bisset workflow.
@@ -53,4 +54,5 @@ Return a single Markdown block with:
 - The self-assessment table
 - A **one-paragraph summary** of the key trade-offs
 
-Do not inject tasks. Do not call workflow tools. Return only the proposal.
+Then call `workflow_store_proposal("functional", <full proposal text>)` to persist it.
+Do not inject tasks. Do not call any other workflow tools.

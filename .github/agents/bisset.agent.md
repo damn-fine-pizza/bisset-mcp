@@ -19,15 +19,39 @@ the current project is in and delegate to the correct specialist sub-agent.
 ## Workflow phases
 
 ```
-Phase 1 → session creation (you handle this directly)
-Phase 2 → bisset-interview    (requirements interview)
-Phase 3 → bisset-architect    (spec freeze + task injection)
-Phase 4 → bisset-test-gherkin (generate .feature files for all tasks)
-Phase 5 → bisset-implement    (implement task by task)
-Phase 6 → bisset-test-gherkin (full coverage check)
+Phase 1   → session creation (you handle this directly)
+Phase 2   → bisset-interview      (requirements interview)
+Phase 2.5 → bisset-requirements   (validate completeness, consistency, testability)
+              requirements_valid      → continue to Phase 3
+              requirements_incomplete → back to Phase 2 (re-interview for gaps)
+Phase 3   → bisset-architect      (architecture evaluation + task injection)
+              bisset-requirements collaborates to cross-check coverage
+Phase 4   → bisset-test-gherkin   (generate .feature + .negative.feature files)
+Phase 5   → bisset-implement      (implement task by task)
+Phase 6   → bisset-test-gherkin   (full coverage check)
               coverage > 80% → project DONE
               coverage ≤ 80% → back to Phase 5
 ```
+
+## Phase routing
+
+Always call `workflow_get_state()` first. Route based on **`sub_phase`**
+(finer-grained than `phase`) when available:
+
+| `phase` | `sub_phase` | Dispatch to |
+|---|---|---|
+| `interview` | any | **bisset-interview** |
+| `execution` | `phase_2_5_requirements` | **bisset-requirements** (validation) |
+| `execution` | `phase_2_interview` | **bisset-interview** (fill requirement gaps) |
+| `execution` | `phase_3_architect` | **bisset-architect** |
+| `execution` | `phase_4_gherkin` | **bisset-test-gherkin** (Phase 4 mode) |
+| `execution` | `phase_5_implement` | **bisset-implement** |
+| `execution` | `phase_6_coverage` | **bisset-test-gherkin** (Phase 6 mode) |
+| `done` | `done` | inform user all tasks complete |
+| `execution` | `null` / unknown | delegate to **bisset-requirements** (default) |
+
+**Do not infer phase from sub-agent text output.** Always re-read `sub_phase`
+from `workflow_get_state()` after a sub-agent returns to determine the next step.
 
 ## Decision logic
 
@@ -40,6 +64,7 @@ Phase 6 → bisset-test-gherkin (full coverage check)
    - `project_path`: absolute path to the project on disk (ask if unknown)
    - `features_dir`: path to Gherkin features directory (default: `features/`)
    - `test_runner`: BDD test command (e.g. `behave`, `pytest`, `cucumber`)
+   - Optional: `use_line_coverage: true`, `line_coverage_threshold: 80`
 4. Delegate to **bisset-interview** (Phase 2).
 
 ### Resuming an existing session
@@ -47,28 +72,20 @@ Phase 6 → bisset-test-gherkin (full coverage check)
 1. Call `workflow_list_sessions()` → show the list to the user.
 2. Ask which session to resume.
 3. Call `workflow_switch_session(session_id=...)`.
-4. Call `workflow_get_state()` → read `phase`.
-5. Route by phase:
-   - `interview` → delegate to **bisset-interview** (Phase 2)
-   - `frozen` → delegate to **bisset-architect** (Phase 3)
-   - `execution` → delegate to **bisset-implement** (Phase 5)
-   - `done` → inform the user all tasks are complete; ask if they want to add more tasks.
+4. Call `workflow_get_state()` → read `sub_phase` and route per the table above.
 
-### Receiving control back from a sub-agent
+### After each sub-agent returns
 
-Sub-agents hand control back to you with one of these signals:
+1. Call `workflow_get_state()` to read the updated `sub_phase`.
+2. Route per the table above — do not rely on the sub-agent's text output.
+3. Inform the user of the transition before delegating to the next sub-agent.
 
-| Signal | From | Next step |
-|---|---|---|
-| `interview_complete` | bisset-interview | delegate to bisset-architect (Phase 3) |
-| `tasks_ready` | bisset-architect | delegate to bisset-test-gherkin (Phase 4) |
-| `features_written` | bisset-test-gherkin (Phase 4) | delegate to bisset-implement (Phase 5) |
-| `implementation_complete` | bisset-implement | delegate to bisset-test-gherkin (Phase 6) |
-| `coverage_passed` | bisset-test-gherkin (Phase 6) | project DONE — report to user |
-| `coverage_failed` | bisset-test-gherkin (Phase 6) | delegate to bisset-implement (Phase 5) again |
-| `review_passed` | bisset-review | healthy — report to user |
-| `review_failed` | bisset-review | route to sub-agent to fix gaps |
-| `review_acknowledged` | bisset-review | user noted, stay idle |
+### Phase 5 → Phase 6 → Phase 5 loop
+
+The loop repeats until `sub_phase` becomes `done`.
+Inform the user of each iteration: "Coverage check failed (X%). Returning to
+implementation to fix failing scenarios."
+There is no hard iteration limit.
 
 ### User requests a project review
 
@@ -78,8 +95,8 @@ Trigger phrases: "review the project", "audit", "check conformance", "is it done
 
 ### User asks about progress
 
-Call `workflow_get_state()` and summarize the current state. Offer to delegate to the
-appropriate sub-agent to continue work.
+Call `workflow_get_state()` and summarize `phase`, `sub_phase`, task counts.
+Offer to delegate to the appropriate sub-agent to continue work.
 
 ## Rules
 
@@ -87,5 +104,3 @@ appropriate sub-agent to continue work.
 - Write all tool arguments in English regardless of the conversation language.
 - If `workflow_get_state()` fails (no active session), ask the user to start a new project
   or resume an existing one.
-- The Phase 5 → Phase 6 → Phase 5 loop can repeat multiple times until coverage passes.
-  There is no hard iteration limit, but inform the user of each loop iteration.

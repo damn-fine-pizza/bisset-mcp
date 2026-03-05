@@ -44,8 +44,16 @@ class Storage:
             failed INTEGER,
             total INTEGER,
             coverage_pct REAL,
+            line_coverage_pct REAL,
             ok INTEGER,
             runner_output TEXT
+        )''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS architecture_proposals (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            paradigm TEXT,
+            content TEXT,
+            created_at REAL
         )''')
         # migrate existing DBs that lack the new columns
         for col in ('description', 'acceptance_criteria', 'negative_acceptance_criteria'):
@@ -53,6 +61,10 @@ class Storage:
                 cur.execute(f'ALTER TABLE tasks ADD COLUMN {col} TEXT')
             except Exception:
                 pass
+        try:
+            cur.execute('ALTER TABLE task_test_runs ADD COLUMN line_coverage_pct REAL')
+        except Exception:
+            pass
         cur.execute('''CREATE TABLE IF NOT EXISTS meta (
             k TEXT, session_id TEXT, v TEXT,
             PRIMARY KEY (k, session_id)
@@ -192,11 +204,11 @@ class Storage:
 
     # ── test runs ─────────────────────────────────────────────────────────────
 
-    def save_test_run(self, task_id: str, passed: int, failed: int, coverage_pct: float, ok: bool, runner_output: str):
+    def save_test_run(self, task_id: str, passed: int, failed: int, coverage_pct: float, ok: bool, runner_output: str, line_coverage_pct: float | None = None):
         run_id = str(uuid.uuid4())[:8]
         self.conn.execute(
-            'INSERT INTO task_test_runs (id, task_id, session_id, run_at, passed, failed, total, coverage_pct, ok, runner_output) VALUES (?,?,?,?,?,?,?,?,?,?)',
-            (run_id, task_id, self.sid, time.time(), passed, failed, passed + failed, coverage_pct, int(ok), runner_output),
+            'INSERT INTO task_test_runs (id, task_id, session_id, run_at, passed, failed, total, coverage_pct, line_coverage_pct, ok, runner_output) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            (run_id, task_id, self.sid, time.time(), passed, failed, passed + failed, coverage_pct, line_coverage_pct, int(ok), runner_output),
         )
         self.conn.commit()
         return run_id
@@ -204,7 +216,27 @@ class Storage:
     def get_last_passing_run(self, task_id: str):
         cur = self.conn.cursor()
         cur.execute(
-            'SELECT id, passed, failed, total, coverage_pct, run_at FROM task_test_runs WHERE task_id=? AND session_id=? AND ok=1 ORDER BY run_at DESC LIMIT 1',
+            'SELECT id, passed, failed, total, coverage_pct, line_coverage_pct, run_at FROM task_test_runs WHERE task_id=? AND session_id=? AND ok=1 ORDER BY run_at DESC LIMIT 1',
             (task_id, self.sid),
         )
         return cur.fetchone()
+
+    # ── architecture proposals ────────────────────────────────────────────────
+
+    def add_proposal(self, paradigm: str, content: str):
+        proposal_id = str(uuid.uuid4())[:8]
+        self.conn.execute(
+            'INSERT OR REPLACE INTO architecture_proposals (id, session_id, paradigm, content, created_at) VALUES (?,?,?,?,?)',
+            (proposal_id, self.sid, paradigm, content, time.time()),
+        )
+        self.conn.commit()
+        self._touch()
+        return proposal_id
+
+    def list_proposals(self):
+        cur = self.conn.cursor()
+        cur.execute(
+            'SELECT paradigm, content, created_at FROM architecture_proposals WHERE session_id=? ORDER BY created_at',
+            (self.sid,),
+        )
+        return cur.fetchall()

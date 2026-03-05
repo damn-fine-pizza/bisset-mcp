@@ -102,6 +102,22 @@ def tool_list_questions(req: ToolRequest):
     return {'questions': questions}
 
 
+@app.post('/tools/workflow_advance_phase')
+def tool_advance_phase(req: ToolRequest):
+    return _engine.advance_phase(req.arguments.get('signal', ''))
+
+
+@app.post('/tools/workflow_store_proposal')
+def tool_store_proposal(req: ToolRequest):
+    a = req.arguments
+    return _engine.store_proposal(a.get('paradigm', ''), a.get('content', ''))
+
+
+@app.post('/tools/workflow_list_proposals')
+def tool_list_proposals(req: ToolRequest):
+    return _engine.list_proposals()
+
+
 @app.post('/tools/workflow_start')
 def tool_start(req: ToolRequest):
     return _engine.start(req.arguments.get('project_meta', {}))
