@@ -96,7 +96,7 @@ PYVER=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_
 info "Python $PYVER at $PYTHON"
 
 # ── Check / activate virtualenv ──────────────────────────────
-VENV_DIR="$REPO_ROOT/.venv"
+VENV_DIR="$CLAUDE_DIR/.venv"
 if [[ -d "$VENV_DIR" ]]; then
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
@@ -264,7 +264,7 @@ PYVER=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_
 info "Python $PYVER at $PYTHON"
 
 # ── Check / activate virtualenv ──────────────────────────────
-VENV_DIR="$REPO_ROOT/.venv"
+VENV_DIR="$CLAUDE_DIR/.venv"
 if [[ -d "$VENV_DIR" ]]; then
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
