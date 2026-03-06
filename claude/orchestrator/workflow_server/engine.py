@@ -1,328 +1,185 @@
-"""
-Workflow Engine - Task Management & Model-Aware Routing
-
-This module handles:
-- Task lifecycle management
-- Model recommendation based on complexity
-- Sub-agent dispatching
-- Workflow state transitions
-- Session orchestration
-
-Completely independent implementation for Claude MCP.
-"""
-
+"""Bisset v2 Workflow Engine — orchestration with rule evaluation and gate logic."""
 import json
-from dataclasses import dataclass
-from enum import Enum
-from typing import Optional, Dict, List, Any
+import subprocess
+from typing import Optional
+
 from .storage import Storage
-
-
-class ModelType(str, Enum):
-    """Available Claude models."""
-    HAIKU = "claude-3-5-haiku"
-    SONNET = "claude-3-5-sonnet"
-    OPUS = "claude-3-opus"
-
-
-@dataclass
-class TaskMetrics:
-    """Metrics for determining model assignment."""
-    title: str
-    description: str
-    assigned_model: Optional[ModelType] = None
-    complexity_score: float = 0.0
-    recommended_model: Optional[ModelType] = None
-
-
-class ComplexityAnalyzer:
-    """Analyzes task descriptions to determine complexity and model recommendation."""
-
-    # Keywords for complexity scoring
-    HAIKU_KEYWORDS = {
-        "simple", "basic", "trivial", "straightforward", "quick", "minor",
-        "small", "fix", "patch", "typo", "comment", "format"
-    }
-
-    SONNET_KEYWORDS = {
-        "implement", "feature", "module", "component", "service", "logic",
-        "algorithm", "refactor", "middleware", "endpoint", "validation",
-        "transform", "parse", "generate", "complex", "moderate"
-    }
-
-    OPUS_KEYWORDS = {
-        "architect", "design", "optimize", "performance", "security",
-        "distributed", "async", "concurrent", "parallel", "machine learning",
-        "cryptography", "compliance", "integration", "migration", "critical",
-        "expert", "advanced", "sophisticated", "complex system", "research"
-    }
-
-    COMPLEXITY_WEIGHTS = {
-        "dependencies": 2.0,
-        "tests": 1.5,
-        "integration": 2.0,
-        "migration": 3.0,
-        "performance": 2.5,
-        "security": 2.5,
-        "documentation": 0.5,
-    }
-
-    @staticmethod
-    def analyze(title: str, description: str) -> TaskMetrics:
-        """
-        Analyze task and return recommended model and complexity score.
-        
-        Args:
-            title: Task title
-            description: Task description
-        
-        Returns:
-            TaskMetrics with complexity_score and recommended_model
-        """
-        combined = f"{title} {description}".lower()
-        score = 0.0
-
-        # Count keyword matches with weighting
-        for keyword, weight in ComplexityAnalyzer.COMPLEXITY_WEIGHTS.items():
-            if keyword in combined:
-                score += weight
-
-        # Analyze specific keywords
-        opus_count = sum(1 for kw in ComplexityAnalyzer.OPUS_KEYWORDS if kw in combined)
-        sonnet_count = sum(1 for kw in ComplexityAnalyzer.SONNET_KEYWORDS if kw in combined)
-        haiku_count = sum(1 for kw in ComplexityAnalyzer.HAIKU_KEYWORDS if kw in combined)
-
-        # Normalize scores with better calibration
-        score += opus_count * 5.0
-        score += sonnet_count * 2.5
-        score += haiku_count * 0.5
-
-        # Determine recommended model based on score
-        if score >= 15:
-            recommended = ModelType.OPUS
-        elif score >= 5:
-            recommended = ModelType.SONNET
-        else:
-            recommended = ModelType.HAIKU
-
-        metrics = TaskMetrics(
-            title=title,
-            description=description,
-            complexity_score=score,
-            recommended_model=recommended
-        )
-        return metrics
+from .rules import RuleEngine, Action
+from .adapters import get_adapter, AdapterResult
 
 
 class WorkflowEngine:
-    """
-    Main workflow orchestration engine.
-    
-    Manages task routing, model assignment, and workflow state transitions.
-    """
+    """Core workflow engine integrating storage, rules, and test adapters."""
 
     def __init__(self, db: Storage):
-        """Initialize engine with storage backend."""
         self.db = db
-        self.analyzer = ComplexityAnalyzer()
 
-    def get_next_task(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get next pending task for session.
-        
-        Args:
-            session_id: Session UUID
-        
-        Returns:
-            Task dict with recommended_model, or None if no pending tasks
-        """
-        task = self.db.get_next_pending_task(session_id)
-        if not task:
-            return None
+    # -- Project ----------------------------------------------------------------
 
-        # Analyze for model recommendation
-        metrics = self.analyzer.analyze(task["title"], task["description"])
-        task["recommended_model"] = metrics.recommended_model.value
-        task["complexity_score"] = metrics.complexity_score
-
-        return task
-
-    def assign_model(
-        self,
-        task_id: str,
-        model: str,
-        override: bool = False
-    ) -> bool:
-        """
-        Assign or override model for task.
-        
-        Args:
-            task_id: Task UUID
-            model: Model name (haiku/sonnet/opus)
-            override: Force override if already assigned
-        
-        Returns:
-            True if assignment successful
-        """
-        try:
-            # Validate model
-            if model not in [m.value for m in ModelType]:
-                return False
-
-            # Check if already assigned
-            task = self.db.get_task(task_id)
-            if task and task.get("assigned_model") and not override:
-                return False
-
-            # Store assignment
-            self.db.update_task_model(task_id, model)
-            return True
-        except Exception:
-            return False
-
-    def recommend_model(self, title: str, description: str) -> str:
-        """
-        Get model recommendation for a title/description pair.
-        
-        Args:
-            title: Task title
-            description: Task description
-        
-        Returns:
-            Recommended model name
-        """
-        metrics = self.analyzer.analyze(title, description)
-        return metrics.recommended_model.value
-
-    def start_background_job(
-        self,
-        session_id: str,
-        agent_name: str,
-        task_id: Optional[str] = None
-    ) -> str:
-        """
-        Create a background job for async execution.
-        
-        Args:
-            session_id: Session UUID
-            agent_name: Name of agent (e.g., "bisset-interview")
-            task_id: Optional associated task
-        
-        Returns:
-            Job ID
-        """
-        job_id = self.db.create_background_job(
-            session_id=session_id,
-            agent_name=agent_name,
-            task_id=task_id
+    def create_project(self, name: str, path: str, **config) -> str:
+        """Create a project and lock it."""
+        pid = self.db.create_project(
+            name=name,
+            path=path,
+            test_runner=config.get("test_runner", "generic"),
+            test_args=config.get("test_args", ""),
+            adapter=config.get("adapter", "generic"),
+            features_dir=config.get("features_dir", "features/"),
         )
-        return job_id
+        self.db.lock_project(pid)
+        return pid
 
-    def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get current job status.
-        
-        Args:
-            job_id: Job UUID
-        
-        Returns:
-            Job dict with status and result, or None if not found
-        """
-        return self.db.get_background_job(job_id)
+    def detect_project(self, cwd: str) -> dict | None:
+        """Detect project by matching cwd to stored path."""
+        return self.db.get_project_by_path(cwd)
 
-    def update_job_status(
-        self,
-        job_id: str,
-        status: str,
-        result: Optional[Dict[str, Any]] = None
-    ) -> bool:
-        """
-        Update job status and optional result.
-        
-        Args:
-            job_id: Job UUID
-            status: New status (running/completed/failed)
-            result: Optional result dict
-        
-        Returns:
-            True if updated successfully
-        """
-        return self.db.update_background_job(
-            job_id=job_id,
-            status=status,
-            result=result
-        )
+    # -- Session ----------------------------------------------------------------
 
-    def list_jobs(self, session_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        List background jobs for a session.
-        
-        Args:
-            session_id: Session UUID
-            status: Optional filter by status
-        
-        Returns:
-            List of job dicts
-        """
-        return self.db.list_background_jobs(session_id, status)
+    def start_session(self, project_id: str, workflow_type: str,
+                      default_rules: list[dict] | None = None) -> str:
+        """Start a new session for a project."""
+        self.db.lock_project(project_id)
+        sid = self.db.create_session(workflow_type, default_rules=default_rules)
+        self.db.add_event(sid, "session_started", data={
+            "workflow_type": workflow_type,
+            "project_id": project_id,
+        })
+        return sid
 
-    def mark_task_complete(
-        self,
-        task_id: str,
-        test_results: Dict[str, Any]
-    ) -> bool:
-        """
-        Mark task as complete with test results.
-        
-        Args:
-            task_id: Task UUID
-            test_results: Test execution results
-        
-        Returns:
-            True if marked successfully
-        """
+    def resume_session(self, project_id: str) -> str:
+        """Resume the most recent pausable session for a project."""
+        self.db.lock_project(project_id)
+        sessions = self.db.list_sessions(project_id=project_id)
+        # Find most recent non-completed session
+        for sess in reversed(sessions):
+            if sess["status"] in ("active", "paused"):
+                self.db.update_session_status(sess["id"], "active")
+                self.db.add_event(sess["id"], "session_resumed")
+                return sess["id"]
+        raise RuntimeError(f"No resumable session found for project {project_id}")
+
+    def session_status(self, session_id: str) -> dict:
+        """Get comprehensive session status."""
+        session = self.db.get_session(session_id)
+        steps = self.db.list_steps(session_id)
+        current = self.db.get_current_step(session_id)
+        return {
+            "session": session,
+            "steps": steps,
+            "current_step": current,
+            "total_steps": len(steps),
+            "completed_steps": sum(1 for s in steps if s["status"] == "passed"),
+            "failed_steps": sum(1 for s in steps if s["status"] == "failed"),
+        }
+
+    # -- Step -------------------------------------------------------------------
+
+    def add_step(self, session_id: str, title: str, description: str, order: int,
+                 **kwargs) -> str:
+        """Add a step to a session."""
+        step_id = self.db.add_step(session_id, title, description, order, **kwargs)
+        self.db.add_event(session_id, "step_added", step_id=step_id, data={
+            "title": title, "order": order,
+        })
+        return step_id
+
+    def current_step(self, session_id: str) -> dict | None:
+        """Get the current active or next pending step."""
+        return self.db.get_current_step(session_id)
+
+    # -- Test Execution ---------------------------------------------------------
+
+    def record_test_run(self, step_id: str, session_id: str,
+                        passed: int, failed: int, coverage: float,
+                        runner_output: str = "") -> str:
+        """Record a test run result."""
+        run_id = self.db.add_test_run(step_id, session_id, passed, failed, coverage, runner_output)
+        self.db.update_step(step_id, current_coverage=coverage)
+        return run_id
+
+    def run_tests(self, step_id: str, session_id: str) -> AdapterResult:
+        """Execute tests for a step via subprocess."""
+        step = self.db.get_step(step_id)
+        if not step or not step.get("feature_path"):
+            return AdapterResult(passed=0, failed=0)
+
+        session = self.db.get_session(session_id)
+        project = self.db.get_project(session["project_id"])
+
+        adapter = get_adapter(project.get("adapter", "generic"))
+        cmd = [project["test_runner"]]
+        if project.get("test_args"):
+            cmd.extend(project["test_args"].split())
+        cmd.append(step["feature_path"])
+
         try:
-            self.db.update_task_status(task_id, "completed")
-            self.db.add_event(
-                session_id=None,
-                event_type="task_completed",
-                data={
-                    "task_id": task_id,
-                    "test_results": test_results
-                }
-            )
-            return True
-        except Exception:
-            return False
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                                  cwd=project["path"])
+            result = adapter.parse(proc.returncode, proc.stdout, proc.stderr)
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            result = AdapterResult(passed=0, failed=1, errors=[str(e)])
 
-    def fail_task(
-        self,
-        task_id: str,
-        error: str,
-        retry_count: int = 0
-    ) -> bool:
+        self.record_test_run(step_id, session_id, result.passed, result.failed,
+                             result.coverage, result.raw_output)
+        return result
+
+    # -- Step Completion --------------------------------------------------------
+
+    def complete_step(self, step_id: str, session_id: str) -> str:
+        """Attempt to complete a step by evaluating rules.
+
+        Returns action string: advance, retry, ask_user, abort, skip.
         """
-        Mark task as failed.
-        
-        Args:
-            task_id: Task UUID
-            error: Error message
-            retry_count: Number of retries
-        
-        Returns:
-            True if marked successfully
-        """
-        try:
-            self.db.update_task_status(task_id, "failed")
-            self.db.add_event(
-                session_id=None,
-                event_type="task_failed",
-                data={
-                    "task_id": task_id,
-                    "error": error,
-                    "retry_count": retry_count
-                }
-            )
-            return True
-        except Exception:
-            return False
+        step = self.db.get_step(step_id)
+        session = self.db.get_session(session_id)
+        latest_run = self.db.get_latest_test_run(step_id)
+
+        # Build rule context
+        has_tests = latest_run is not None
+        context = {
+            "tests_pass": has_tests and latest_run["failed"] == 0 and latest_run["passed"] > 0,
+            "tests_fail": has_tests and latest_run["failed"] > 0,
+            "coverage": latest_run["coverage"] if has_tests else 0.0,
+            "retries": step["retries"],
+            "gate": step.get("gate", "tests_only"),
+            "no_tests": not has_tests,
+        }
+
+        # Get rules: step override or session default
+        rules = step.get("rules_override") or session.get("default_rules")
+        if not rules:
+            rules = [{"when": "always", "then": "abort"}]
+
+        engine = RuleEngine(rules)
+        action = engine.evaluate(**context)
+
+        # Apply action
+        if action == Action.ADVANCE:
+            self.db.update_step(step_id, status="passed")
+            self.db.add_event(session_id, "step_completed", step_id=step_id,
+                              data={"action": "advance"})
+        elif action == Action.RETRY:
+            self.db.update_step(step_id, status="active", retries=step["retries"] + 1)
+            self.db.add_event(session_id, "step_retry", step_id=step_id,
+                              data={"retries": step["retries"] + 1})
+        elif action == Action.ASK_USER:
+            self.db.add_event(session_id, "step_ask_user", step_id=step_id)
+        elif action == Action.ABORT:
+            self.db.update_step(step_id, status="failed")
+            self.db.add_event(session_id, "step_aborted", step_id=step_id)
+        elif action == Action.SKIP:
+            self.db.update_step(step_id, status="skipped")
+            self.db.add_event(session_id, "step_skipped", step_id=step_id)
+
+        # Check if all steps done -> complete session
+        steps = self.db.list_steps(session_id)
+        if all(s["status"] in ("passed", "skipped") for s in steps):
+            self.db.update_session_status(session_id, "completed")
+
+        return action.value
+
+    def skip_step(self, step_id: str, session_id: str, reason: str) -> None:
+        """Skip a step with a reason."""
+        self.db.update_step(step_id, status="skipped")
+        self.db.add_event(session_id, "step_skipped", step_id=step_id,
+                          data={"reason": reason})
