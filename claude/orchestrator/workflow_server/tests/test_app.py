@@ -98,9 +98,11 @@ class TestEndpoints:
         """Create session should return wrapped response."""
         with patch('orchestrator.workflow_server.app.app.state') as mock_state:
             mock_db = Mock()
-            mock_db.create_session.return_value = {
+            mock_db.create_session.return_value = "session-123"
+            mock_db.get_session.return_value = {
                 "id": "session-123",
-                "created_at": "2026-03-06T12:00:00"
+                "created_at": 1234567890.0,
+                "phase": "interview",
             }
             mock_state.db = mock_db
             
@@ -136,7 +138,8 @@ class TestEndpoints:
         """Responses should include timing metadata."""
         with patch('orchestrator.workflow_server.app.app.state') as mock_state:
             mock_db = Mock()
-            mock_db.create_session.return_value = {"id": "session-123"}
+            mock_db.create_session.return_value = "session-123"
+            mock_db.get_session.return_value = {"id": "session-123", "phase": "interview"}
             mock_state.db = mock_db
             
             response = client.post("/workflow_new_session")

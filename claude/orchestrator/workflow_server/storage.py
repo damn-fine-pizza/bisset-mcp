@@ -14,9 +14,13 @@ SCHEMA_VERSION = 7
 class Storage:
     """SQLite-based persistence for Bisset MCP workflow state."""
 
-    def __init__(self, db_path):
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            db_path = os.environ.get('DATABASE_PATH', './bisset-db/workflow.db')
         self.db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        parent = os.path.dirname(db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         # WAL mode: improves concurrent read/write performance and crash safety
         self.conn.execute('PRAGMA journal_mode=WAL')
@@ -184,13 +188,27 @@ class Storage:
 
     # ── Session Management ────────────────────────────────────────────────────
 
-    def create_session(self, name: str = '') -> str:
-        """Create a new session."""
+    def create_session(self, project_name: str = '', mcp_client: str = 'generic', async_mode: bool = False) -> str:
+        """Create a new session and return its ID.
+
+        Args:
+            project_name: Human-readable project name.
+            mcp_client: MCP client type (e.g. ``claude-mcp``, ``copilot-cli``).
+            async_mode: Whether the session uses async sub-agent execution.
+
+        Returns:
+            New session UUID (8 chars).
+        """
         sid = str(uuid.uuid4())[:8]
         now = time.time()
         self.conn.execute(
-            'INSERT INTO sessions (id, name, created_at, updated_at) VALUES (?,?,?,?)',
-            (sid, name or sid, now, now)
+            'INSERT INTO sessions (id, name, mcp_client, phase, created_at, updated_at) VALUES (?,?,?,?,?,?)',
+            (sid, project_name or sid, mcp_client, 'interview', now, now)
+        )
+        # Store async_mode in meta
+        self.conn.execute(
+            'INSERT OR REPLACE INTO meta (k, session_id, v) VALUES (?,?,?)',
+            ('async_mode', sid, json.dumps(async_mode))
         )
         self.conn.commit()
         self._active_session_id = sid
@@ -205,11 +223,49 @@ class Storage:
         self._active_session_id = session_id
         return True
 
-    def get_session(self, session_id: str):
-        """Get session metadata."""
+    def get_session(self, session_id: str) -> dict | None:
+        """Return session as a dict, or None if not found."""
         cur = self.conn.cursor()
-        cur.execute('SELECT id, name, created_at, updated_at FROM sessions WHERE id=?', (session_id,))
-        return cur.fetchone()
+        cur.execute(
+            'SELECT id, name, created_at, updated_at, mcp_client, phase, sub_phase, spec_frozen_at '
+            'FROM sessions WHERE id=?',
+            (session_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            'id': row[0],
+            'name': row[1],
+            'created_at': row[2],
+            'updated_at': row[3],
+            'mcp_client': row[4],
+            'phase': row[5] or 'interview',
+            'sub_phase': row[6],
+            'spec_frozen_at': row[7],
+        }
+
+    def get_sessions(self) -> list[dict]:
+        """Return all sessions ordered by creation time."""
+        cur = self.conn.cursor()
+        cur.execute(
+            'SELECT id, name, created_at, updated_at, mcp_client, phase, sub_phase, spec_frozen_at '
+            'FROM sessions ORDER BY created_at'
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                'id': r[0],
+                'name': r[1],
+                'created_at': r[2],
+                'updated_at': r[3],
+                'mcp_client': r[4],
+                'phase': r[5] or 'interview',
+                'sub_phase': r[6],
+                'spec_frozen_at': r[7],
+            }
+            for r in rows
+        ]
 
     @property
     def sid(self):
@@ -398,14 +454,24 @@ class Storage:
 
     # ── Background Jobs (v7) ──────────────────────────────────────────────────
 
-    def create_background_job(self, agent_name: str) -> str:
-        """Create a background job for async execution."""
+    def create_background_job(self, agent_name: str, session_id: str = None, task_id: str = None) -> str:
+        """Create a background job for async execution.
+
+        Args:
+            agent_name: Name of the sub-agent (e.g. ``bisset-interview``).
+            session_id: Session to associate the job with; falls back to active session.
+            task_id: Optional task the job works on.
+
+        Returns:
+            Job ID.
+        """
+        sid = session_id or self.sid
         job_id = str(uuid.uuid4())[:8]
         now = time.time()
         self.conn.execute(
             'INSERT INTO background_jobs (id, session_id, agent_name, status, created_at, updated_at) '
             'VALUES (?,?,?,?,?,?)',
-            (job_id, self.sid, agent_name, 'created', now, now)
+            (job_id, sid, agent_name, 'created', now, now)
         )
         self.conn.commit()
         return job_id
@@ -413,19 +479,20 @@ class Storage:
     def update_background_job(self, job_id: str, status: str, result: dict | None = None):
         """Update job status and optional result."""
         self.conn.execute(
-            'UPDATE background_jobs SET status=?, result=?, updated_at=? WHERE id=? AND session_id=?',
-            (status, json.dumps(result) if result else None, time.time(), job_id, self.sid)
+            'UPDATE background_jobs SET status=?, result=?, updated_at=? WHERE id=?',
+            (status, json.dumps(result) if result else None, time.time(), job_id)
         )
         self.conn.commit()
-        self._touch()
+        if self._active_session_id:
+            self._touch()
 
     def get_background_job(self, job_id: str):
         """Get job status."""
         cur = self.conn.cursor()
         cur.execute(
             'SELECT id, agent_name, status, result, created_at, updated_at FROM background_jobs '
-            'WHERE id=? AND session_id=?',
-            (job_id, self.sid)
+            'WHERE id=?',
+            (job_id,)
         )
         row = cur.fetchone()
         if row:
@@ -438,6 +505,34 @@ class Storage:
                 'updated_at': row[5],
             }
         return None
+
+    def list_background_jobs(self, session_id: str, status: str = None) -> list[dict]:
+        """List background jobs for a session, optionally filtered by status."""
+        cur = self.conn.cursor()
+        if status:
+            cur.execute(
+                'SELECT id, agent_name, status, result, created_at, updated_at FROM background_jobs '
+                'WHERE session_id=? AND status=? ORDER BY created_at',
+                (session_id, status)
+            )
+        else:
+            cur.execute(
+                'SELECT id, agent_name, status, result, created_at, updated_at FROM background_jobs '
+                'WHERE session_id=? ORDER BY created_at',
+                (session_id,)
+            )
+        rows = cur.fetchall()
+        return [
+            {
+                'id': r[0],
+                'agent_name': r[1],
+                'status': r[2],
+                'result': json.loads(r[3]) if r[3] else None,
+                'created_at': r[4],
+                'updated_at': r[5],
+            }
+            for r in rows
+        ]
 
     # ── Session Metadata (v7) ─────────────────────────────────────────────────
 
@@ -506,3 +601,191 @@ class Storage:
             }
             for r in rows
         ]
+
+    # ── App-facing query helpers ──────────────────────────────────────────────
+
+    def get_next_question(self, session_id: str) -> dict | None:
+        """Return next unanswered question for *session_id* as a dict."""
+        cur = self.conn.cursor()
+        cur.execute(
+            'SELECT id, text FROM questions WHERE answer IS NULL AND session_id=? '
+            'ORDER BY COALESCE(order_index, 9999), id LIMIT 1',
+            (session_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {'id': row[0], 'text': row[1], 'session_id': session_id}
+
+    def get_questions(self, session_id: str) -> list[dict]:
+        """Return all questions with answer status for *session_id*."""
+        cur = self.conn.cursor()
+        cur.execute(
+            'SELECT id, text, answer, answered_at FROM questions WHERE session_id=? '
+            'ORDER BY COALESCE(order_index, 9999), id',
+            (session_id,)
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                'id': r[0],
+                'text': r[1],
+                'answer': r[2],
+                'answered_at': r[3],
+                'answered': r[2] is not None,
+            }
+            for r in rows
+        ]
+
+    def freeze_spec(self, session_id: str) -> None:
+        """Mark spec as frozen for *session_id*."""
+        self.conn.execute(
+            'UPDATE sessions SET spec_frozen_at=?, phase=? WHERE id=?',
+            (time.time(), 'architecture', session_id)
+        )
+        self.conn.commit()
+
+    def get_next_pending_task(self, session_id: str) -> dict | None:
+        """Return the next pending task for *session_id* as a dict."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT id, title, description, acceptance_criteria, assigned_model FROM tasks "
+            "WHERE status='pending' AND session_id=? ORDER BY created_at LIMIT 1",
+            (session_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            'id': row[0],
+            'title': row[1],
+            'description': row[2] or '',
+            'acceptance_criteria': row[3] or '',
+            'assigned_model': row[4],
+        }
+
+    def get_task(self, task_id: str) -> dict | None:
+        """Return a task by ID as a dict."""
+        cur = self.conn.cursor()
+        cur.execute(
+            'SELECT id, session_id, title, description, status, assigned_model, created_at, done_at '
+            'FROM tasks WHERE id=?',
+            (task_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            'id': row[0],
+            'session_id': row[1],
+            'title': row[2],
+            'description': row[3] or '',
+            'status': row[4],
+            'assigned_model': row[5],
+            'created_at': row[6],
+            'done_at': row[7],
+        }
+
+    def update_task_model(self, task_id: str, model: str) -> None:
+        """Set assigned_model on a task."""
+        self.conn.execute(
+            'UPDATE tasks SET assigned_model=? WHERE id=?',
+            (model, task_id)
+        )
+        self.conn.commit()
+
+    def update_task_status(self, task_id: str, status: str) -> None:
+        """Update task status field."""
+        done_at = time.time() if status in ('completed', 'done') else None
+        self.conn.execute(
+            'UPDATE tasks SET status=?, done_at=? WHERE id=?',
+            (status, done_at, task_id)
+        )
+        self.conn.commit()
+
+    def add_event(self, session_id: str | None, event_type: str, data: dict) -> str:
+        """Add a generic event (app-facing alias for log_event).
+
+        Args:
+            session_id: Associated session, or None for global events.
+            event_type: Logical event type (e.g. ``task_completed``).
+            data: Arbitrary event payload.
+
+        Returns:
+            Event ID.
+        """
+        event_id = str(uuid.uuid4())
+        self.conn.execute(
+            'INSERT INTO events (id, session_id, tool_name, args_json, result_json, timestamp, success, duration_ms) '
+            'VALUES (?,?,?,?,?,?,?,?)',
+            (event_id, session_id, event_type, json.dumps(data), '{}', time.time(), 1, None)
+        )
+        self.conn.commit()
+        return event_id
+
+    def list_events(self, session_id: str, limit: int = 100) -> list[dict]:
+        """Return events for *session_id* ordered newest-first."""
+        cur = self.conn.cursor()
+        cur.execute(
+            'SELECT id, tool_name, args_json, timestamp, success, duration_ms FROM events '
+            'WHERE session_id=? ORDER BY timestamp DESC LIMIT ?',
+            (session_id, limit)
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                'id': r[0],
+                'event_type': r[1],
+                'data': json.loads(r[2]) if r[2] else {},
+                'timestamp': r[3],
+                'success': bool(r[4]),
+                'duration_ms': r[5],
+            }
+            for r in rows
+        ]
+
+    def add_task_for_session(
+        self,
+        session_id: str,
+        title: str,
+        description: str = '',
+        acceptance_criteria: str = '',
+        negative_acceptance_criteria: str = '',
+    ) -> str:
+        """Add a task to *session_id* (session-ID–explicit variant of add_task)."""
+        tid = str(uuid.uuid4())[:8]
+        self.conn.execute(
+            'INSERT OR REPLACE INTO tasks '
+            '(id, session_id, title, status, created_at, description, acceptance_criteria, negative_acceptance_criteria) '
+            'VALUES (?,?,?,?,?,?,?,?)',
+            (tid, session_id, title, 'pending', time.time(), description, acceptance_criteria,
+             negative_acceptance_criteria)
+        )
+        self.conn.commit()
+        return tid
+
+    def save_test_run_for_session(
+        self,
+        session_id: str,
+        task_id: str,
+        passed: int,
+        failed: int,
+        coverage_pct: float,
+        ok: bool,
+        runner_output: str,
+    ) -> str:
+        """Save a test run result for *session_id*."""
+        run_id = str(uuid.uuid4())[:8]
+        self.conn.execute(
+            'INSERT INTO task_test_runs '
+            '(id, task_id, session_id, run_at, passed, failed, total, coverage_pct, ok, runner_output) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?)',
+            (run_id, task_id, session_id, time.time(), passed, failed, passed + failed,
+             coverage_pct, int(ok), runner_output)
+        )
+        self.conn.commit()
+        return run_id
+
+    def close(self):
+        """Close the database connection."""
+        self.conn.close()

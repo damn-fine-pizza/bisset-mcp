@@ -126,3 +126,99 @@ class TestStorageV7:
             cols = {row[1] for row in cur.fetchall()}
             assert {"mcp_client", "phase", "sub_phase", "spec_frozen_at"}.issubset(cols)
 
+
+    def test_create_session_new_signature(self):
+        """Test updated create_session signature stores mcp_client and phase."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            storage = Storage(db_path)
+
+            sid = storage.create_session(
+                project_name="MyApp",
+                mcp_client="claude-mcp",
+                async_mode=True,
+            )
+
+            session = storage.get_session(sid)
+            assert isinstance(session, dict)
+            assert session["id"] == sid
+            assert session["name"] == "MyApp"
+            assert session["mcp_client"] == "claude-mcp"
+            assert session["phase"] == "interview"
+
+    def test_get_session_returns_dict(self):
+        """get_session should return a dict, not a tuple."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            storage = Storage(db_path)
+            sid = storage.create_session("DictTest")
+            session = storage.get_session(sid)
+            assert isinstance(session, dict)
+            assert set(session.keys()) >= {"id", "name", "created_at", "updated_at", "phase"}
+
+    def test_get_sessions_returns_list_of_dicts(self):
+        """get_sessions should return a list of dicts."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            storage = Storage(db_path)
+            storage.create_session("Proj-A")
+            storage.create_session("Proj-B")
+            sessions = storage.get_sessions()
+            assert len(sessions) == 2
+            assert all(isinstance(s, dict) for s in sessions)
+
+    def test_list_background_jobs_by_session(self):
+        """list_background_jobs should filter by session_id."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            storage = Storage(db_path)
+            sid = storage.create_session("Test")
+
+            job_id = storage.create_background_job("bisset-architect", session_id=sid)
+            jobs = storage.list_background_jobs(sid)
+            assert len(jobs) == 1
+            assert jobs[0]["id"] == job_id
+
+    def test_app_facing_task_helpers(self):
+        """Test get_next_pending_task, update_task_status, get_task."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            storage = Storage(db_path)
+            sid = storage.create_session("TaskTest")
+
+            task_id = storage.add_task_for_session(sid, "Build API", description="REST API")
+            task = storage.get_next_pending_task(sid)
+            assert task is not None
+            assert task["id"] == task_id
+            assert task["title"] == "Build API"
+
+            storage.update_task_status(task_id, "completed")
+            done = storage.get_task(task_id)
+            assert done["status"] == "completed"
+
+    def test_add_event_and_list_events(self):
+        """Test add_event and list_events."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            storage = Storage(db_path)
+            sid = storage.create_session("EventTest")
+
+            storage.add_event(sid, "task_completed", {"task_id": "t1"})
+            storage.add_event(sid, "spec_frozen", {})
+
+            events = storage.list_events(sid)
+            assert len(events) == 2
+            types = {e["event_type"] for e in events}
+            assert "task_completed" in types
+
+    def test_freeze_spec(self):
+        """freeze_spec should set spec_frozen_at and advance phase."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            storage = Storage(db_path)
+            sid = storage.create_session("FreezeTest")
+
+            storage.freeze_spec(sid)
+            session = storage.get_session(sid)
+            assert session["spec_frozen_at"] is not None
+            assert session["phase"] == "architecture"
