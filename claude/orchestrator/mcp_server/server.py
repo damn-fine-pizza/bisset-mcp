@@ -1,280 +1,114 @@
-"""
-Claude MCP Server - Independent implementation for Claude integration.
-STDIO proxy using Claude SDK MCP protocol.
+"""Bisset v2 MCP Server -- STDIO proxy using JSON-RPC protocol.
+
+Translates MCP tool calls into HTTP requests to workflow_server.
+Exposes resources and prompts for Claude context.
 """
 import json
 import logging
-import time
 import sys
-from typing import Any
+
+from . import client as _client
+from .prompts import PromptRegistry
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('claude-mcp-server')
+logger = logging.getLogger("bisset-mcp-server")
 
 
-class ClaudeServerProtocol:
-    """MCP protocol handler for Claude SDK."""
+class BissetMCPServer:
+    """MCP protocol handler for Bisset v2."""
 
     def __init__(self):
+        self.prompt_registry = PromptRegistry()
         self.tools = self._build_tools()
-        self.prompts = self._build_prompts()
         self.resources = self._build_resources()
 
     def _build_tools(self) -> list[dict]:
-        """Build all 26+ tool definitions."""
+        """Build MCP tool definitions for all v2 tools."""
         return [
-            {
-                "name": "workflow_new_session",
-                "description": "Create a new Bisset project session.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"}
-                    }
-                }
-            },
-            {
-                "name": "workflow_switch_session",
-                "description": "Switch to an existing session.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "session_id": {"type": "string"}
-                    },
-                    "required": ["session_id"]
-                }
-            },
-            {
-                "name": "workflow_detect_session",
-                "description": "Detect session for a project path.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "cwd": {"type": "string"}
-                    },
-                    "required": ["cwd"]
-                }
-            },
-            {
-                "name": "workflow_start",
-                "description": "Start workflow with project metadata.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "project_meta": {"type": "object"}
-                    },
-                    "required": ["project_meta"]
-                }
-            },
-            {
-                "name": "workflow_get_state",
-                "description": "Get current workflow state.",
-                "input_schema": {"type": "object"}
-            },
-            {
-                "name": "workflow_next_question",
-                "description": "Get next interview question.",
-                "input_schema": {"type": "object"}
-            },
-            {
-                "name": "workflow_record_answer",
-                "description": "Record an interview answer.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "question_id": {"type": "string"},
-                        "answer_text": {"type": "string"}
-                    },
-                    "required": ["question_id", "answer_text"]
-                }
-            },
-            {
-                "name": "workflow_freeze_spec",
-                "description": "Freeze the specification.",
-                "input_schema": {"type": "object"}
-            },
-            {
-                "name": "workflow_next_task",
-                "description": "Get next task to implement.",
-                "input_schema": {"type": "object"}
-            },
-            {
-                "name": "workflow_accept_task_result",
-                "description": "Accept completed task.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string"},
-                        "summary": {"type": "string"},
-                        "artifacts_changed": {"type": "array"},
-                        "tests_run": {"type": "array"},
-                        "test_results": {"type": "object"}
-                    },
-                    "required": ["task_id", "summary"]
-                }
-            },
-            {
-                "name": "workflow_report",
-                "description": "Get progress report.",
-                "input_schema": {"type": "object"}
-            },
-            {
-                "name": "workflow_is_done",
-                "description": "Check if workflow is complete.",
-                "input_schema": {"type": "object"}
-            },
-            {
-                "name": "workflow_list_sessions",
-                "description": "List all sessions.",
-                "input_schema": {"type": "object"}
-            },
-            {
-                "name": "workflow_list_tasks",
-                "description": "List all tasks.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "status": {"type": "string"}
-                    }
-                }
-            },
-            {
-                "name": "workflow_list_questions",
-                "description": "List all questions.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "answered": {"type": "boolean"}
-                    }
-                }
-            },
-            {
-                "name": "workflow_run_tests",
-                "description": "Run tests for a task.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string"}
-                    },
-                    "required": ["task_id"]
-                }
-            },
-            {
-                "name": "workflow_add_task",
-                "description": "Add a new task.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "description": {"type": "string"},
-                        "acceptance_criteria": {"type": "string"},
-                        "negative_acceptance_criteria": {"type": "string"}
-                    },
-                    "required": ["task_id", "title"]
-                }
-            },
-            {
-                "name": "workflow_advance_phase",
-                "description": "Advance workflow phase.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "signal": {"type": "string"}
-                    },
-                    "required": ["signal"]
-                }
-            },
-            {
-                "name": "workflow_store_proposal",
-                "description": "Store architecture proposal.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "paradigm": {"type": "string"},
-                        "content": {"type": "string"}
-                    },
-                    "required": ["paradigm", "content"]
-                }
-            },
-            {
-                "name": "workflow_list_proposals",
-                "description": "List architecture proposals.",
-                "input_schema": {"type": "object"}
-            },
-            {
-                "name": "workflow_status",
-                "description": "Get comprehensive status.",
-                "input_schema": {"type": "object"}
-            },
-            {
-                "name": "workflow_store_note",
-                "description": "Store a note.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "key": {"type": "string"},
-                        "content": {"type": "string"}
-                    },
-                    "required": ["key", "content"]
-                }
-            },
-            {
-                "name": "workflow_bootstrap_project",
-                "description": "Bootstrap project configuration.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "cwd": {"type": "string"},
-                        "autodetect": {"type": "boolean"}
-                    },
-                    "required": ["cwd"]
-                }
-            },
-            {
-                "name": "workflow_run_until_blocked",
-                "description": "Run autonomous loop.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "max_iterations": {"type": "integer"},
-                        "max_minutes": {"type": "number"}
-                    }
-                }
-            },
-            {
-                "name": "workflow_get_events",
-                "description": "Get event log.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "limit": {"type": "integer"}
-                    }
-                }
-            }
+            # Project
+            {"name": "project_detect", "description": "Autodetect project from cwd",
+             "inputSchema": {"type": "object", "properties": {"cwd": {"type": "string"}}, "required": ["cwd"]}},
+            {"name": "project_create", "description": "Create new project and lock it",
+             "inputSchema": {"type": "object", "properties": {
+                 "name": {"type": "string"}, "path": {"type": "string"},
+                 "test_runner": {"type": "string"}, "adapter": {"type": "string"},
+                 "test_args": {"type": "string"}, "features_dir": {"type": "string"},
+             }, "required": ["name", "path"]}},
+            {"name": "project_list", "description": "List all projects",
+             "inputSchema": {"type": "object"}},
+            {"name": "project_switch", "description": "Switch active project",
+             "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]}},
+            # Session
+            {"name": "session_start", "description": "Create session with workflow type",
+             "inputSchema": {"type": "object", "properties": {
+                 "project_id": {"type": "string"}, "workflow_type": {"type": "string"},
+                 "default_rules": {"type": "array"},
+             }, "required": ["project_id"]}},
+            {"name": "session_resume", "description": "Resume latest pausable session",
+             "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]}},
+            {"name": "session_status", "description": "Get session status with steps and progress",
+             "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
+            {"name": "session_list", "description": "List sessions (cross-project ok)",
+             "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}}}},
+            # Pipeline
+            {"name": "step_current", "description": "Get current active step",
+             "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
+            {"name": "step_run_tests", "description": "Execute Gherkin tests for step",
+             "inputSchema": {"type": "object", "properties": {
+                 "step_id": {"type": "string"}, "session_id": {"type": "string"},
+             }, "required": ["step_id", "session_id"]}},
+            {"name": "step_complete", "description": "Attempt to close step (gate check + rules)",
+             "inputSchema": {"type": "object", "properties": {
+                 "step_id": {"type": "string"}, "session_id": {"type": "string"},
+             }, "required": ["step_id", "session_id"]}},
+            {"name": "step_skip", "description": "Skip step with reason",
+             "inputSchema": {"type": "object", "properties": {
+                 "step_id": {"type": "string"}, "session_id": {"type": "string"},
+                 "reason": {"type": "string"},
+             }, "required": ["step_id", "session_id", "reason"]}},
+            {"name": "step_list", "description": "List all steps with status",
+             "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
+            {"name": "step_add", "description": "Add step to pipeline",
+             "inputSchema": {"type": "object", "properties": {
+                 "session_id": {"type": "string"}, "title": {"type": "string"},
+                 "description": {"type": "string"}, "order": {"type": "integer"},
+                 "feature_path": {"type": "string"}, "gate": {"type": "string"},
+             }, "required": ["session_id", "title", "order"]}},
+            {"name": "step_remove", "description": "Remove step (pending only)",
+             "inputSchema": {"type": "object", "properties": {"step_id": {"type": "string"}}, "required": ["step_id"]}},
+            {"name": "step_edit", "description": "Edit step fields",
+             "inputSchema": {"type": "object", "properties": {
+                 "step_id": {"type": "string"}, "title": {"type": "string"},
+                 "description": {"type": "string"}, "gate": {"type": "string"},
+                 "feature_path": {"type": "string"},
+             }, "required": ["step_id"]}},
+            {"name": "step_reorder", "description": "Reorder pipeline steps",
+             "inputSchema": {"type": "object", "properties": {
+                 "session_id": {"type": "string"}, "step_ids": {"type": "array"},
+             }, "required": ["session_id", "step_ids"]}},
+            {"name": "pipeline_view", "description": "Full pipeline with status and dependencies",
+             "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
+            {"name": "pipeline_set_rules", "description": "Set session DSL rules",
+             "inputSchema": {"type": "object", "properties": {
+                 "session_id": {"type": "string"}, "default_rules": {"type": "array"},
+             }, "required": ["session_id", "default_rules"]}},
+            # Introspection
+            {"name": "pipeline_report", "description": "Pipeline report with stats",
+             "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
+            {"name": "event_log", "description": "Session audit trail",
+             "inputSchema": {"type": "object", "properties": {
+                 "session_id": {"type": "string"}, "limit": {"type": "integer"},
+             }, "required": ["session_id"]}},
         ]
 
-    def _build_prompts(self) -> dict:
-        """Build prompt definitions."""
-        return {
-            "phases/requirements_interview": "Interview phase guidelines",
-            "phases/design_review": "Design review prompt",
-            "phases/implementation_loop": "Implementation prompt",
-            "roles/architect": "Architect role",
-            "roles/product_owner": "Product owner role",
-            "roles/tech_lead": "Tech lead role",
-            "roles/test_engineer": "Test engineer role",
-            "roles/build_engineer": "Build engineer role"
-        }
-
-    def _build_resources(self) -> dict:
-        """Build resource definitions."""
-        return {
-            "spec://current": "Current specification",
-            "constraints://current": "Project constraints",
-            "decisions://adr-index": "Architecture decisions",
-            "plan://workbreakdown": "Work breakdown"
-        }
+    def _build_resources(self) -> list[dict]:
+        """Build MCP resource definitions."""
+        return [
+            {"uri": "project://current", "name": "Current project", "mimeType": "application/json"},
+            {"uri": "session://current", "name": "Current session", "mimeType": "application/json"},
+            {"uri": "pipeline://current", "name": "Pipeline steps with status", "mimeType": "application/json"},
+            {"uri": "history://sessions", "name": "Previous sessions", "mimeType": "application/json"},
+        ]
 
     def handle_request(self, request: dict) -> dict:
         """Handle MCP JSON-RPC request."""
@@ -282,153 +116,117 @@ class ClaudeServerProtocol:
         params = request.get("params", {})
         request_id = request.get("id")
 
-        if method == "initialize":
-            return self._handle_initialize(request_id)
-        elif method == "tools/list":
-            return self._handle_tools_list(request_id)
-        elif method == "tools/call":
-            return self._handle_tool_call(request_id, params)
-        elif method == "prompts/list":
-            return self._handle_prompts_list(request_id)
-        elif method == "prompts/get":
-            return self._handle_prompt_get(request_id, params)
-        elif method == "resources/list":
-            return self._handle_resources_list(request_id)
-        elif method == "resources/read":
-            return self._handle_resource_read(request_id, params)
-        else:
-            return self._error_response(request_id, "method_not_found", f"Unknown: {method}")
+        handlers = {
+            "initialize": self._handle_initialize,
+            "tools/list": self._handle_tools_list,
+            "tools/call": self._handle_tool_call,
+            "prompts/list": self._handle_prompts_list,
+            "prompts/get": self._handle_prompt_get,
+            "resources/list": self._handle_resources_list,
+            "resources/read": self._handle_resource_read,
+        }
 
-    def _handle_initialize(self, request_id: str) -> dict:
-        """Handle initialize."""
+        handler = handlers.get(method)
+        if handler:
+            return handler(request_id, params)
+        return self._error_response(request_id, "method_not_found", f"Unknown: {method}")
+
+    def _handle_initialize(self, request_id, params) -> dict:
         return {
-            "jsonrpc": "2.0",
-            "id": request_id,
+            "jsonrpc": "2.0", "id": request_id,
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {
                     "tools": {"listChanged": True},
                     "prompts": {"listChanged": True},
-                    "resources": {"listChanged": True}
+                    "resources": {"listChanged": True},
                 },
-                "serverInfo": {
-                    "name": "BissetMCP Claude Orchestrator",
-                    "version": "1.0.0"
-                }
+                "serverInfo": {"name": "Bisset MCP", "version": "2.0.0"},
             }
         }
 
-    def _handle_tools_list(self, request_id: str) -> dict:
-        """Handle tools/list."""
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": {"tools": self.tools}
-        }
+    def _handle_tools_list(self, request_id, params) -> dict:
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": self.tools}}
 
-    def _handle_tool_call(self, request_id: str, params: dict) -> dict:
-        """Forward tools/call to the workflow_server via HTTP."""
-        from . import client as _client
-
+    def _handle_tool_call(self, request_id, params) -> dict:
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
-
         try:
             result = _client.call_tool(tool_name, arguments)
         except Exception as exc:
             return self._error_response(request_id, "backend_error", str(exc))
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
-        # result is already in Claude SDK TextContent format from the workflow_server
+    def _handle_prompts_list(self, request_id, params) -> dict:
+        names = self.prompt_registry.list_prompts()
+        prompts = [{"name": n, "description": f"Bisset {n.split('/')[-1]} prompt"} for n in names]
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"prompts": prompts}}
+
+    def _handle_prompt_get(self, request_id, params) -> dict:
+        name = params.get("name", "")
+        context_args = params.get("arguments", {})
+        tpl = self.prompt_registry.get_prompt(name)
+        if not tpl:
+            return self._error_response(request_id, "not_found", f"Prompt not found: {name}")
+        text = tpl.render(db_vars={}, context_vars=context_args)
         return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": result,
+            "jsonrpc": "2.0", "id": request_id,
+            "result": {"messages": [{"role": "user", "content": {"type": "text", "text": text}}]}
         }
 
-    def _handle_prompts_list(self, request_id: str) -> dict:
-        """Handle prompts/list."""
-        prompts = [{"name": name, "description": desc} for name, desc in self.prompts.items()]
+    def _handle_resources_list(self, request_id, params) -> dict:
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"resources": self.resources}}
+
+    def _handle_resource_read(self, request_id, params) -> dict:
+        uri = params.get("uri", "")
+        # Map URIs to tool calls for live data
+        uri_tool_map = {
+            "project://current": ("project_list", {}),
+            "session://current": ("session_list", {}),
+            "pipeline://current": ("project_list", {}),
+            "history://sessions": ("session_list", {}),
+        }
+        tool_info = uri_tool_map.get(uri)
+        if tool_info:
+            try:
+                data = _client.call_tool(tool_info[0], tool_info[1])
+                text = json.dumps(data)
+            except Exception:
+                text = json.dumps({"error": f"Could not fetch {uri}"})
+        else:
+            text = json.dumps({"error": f"Unknown resource: {uri}"})
         return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": {"prompts": prompts}
+            "jsonrpc": "2.0", "id": request_id,
+            "result": {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]}
         }
 
-    def _handle_prompt_get(self, request_id: str, params: dict) -> dict:
-        """Handle prompts/get — fetch from workflow_server."""
-        from . import client as _client
-
-        prompt_name = params.get("name", "")
-        try:
-            data = _client.get_prompt(prompt_name)
-            # data is a ResponseWrapper dict; extract the text content
-            text = data.get("content", [{}])[0].get("text", "")
-        except Exception:
-            text = self.prompts.get(prompt_name, f"# {prompt_name}\n(not found)")
-
+    def _error_response(self, request_id, code: str, message: str) -> dict:
         return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": {"messages": [{"role": "user", "content": text}]}
-        }
-
-    def _handle_resources_list(self, request_id: str) -> dict:
-        """Handle resources/list."""
-        resources = [
-            {"uri": uri, "name": name, "mimeType": "text/markdown"}
-            for uri, name in self.resources.items()
-        ]
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": {"resources": resources}
-        }
-
-    def _handle_resource_read(self, request_id: str, params: dict) -> dict:
-        """Handle resources/read."""
-        uri = params.get("uri")
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": {
-                "contents": [{"uri": uri, "mimeType": "text/markdown", "text": "Content"}]
-            }
-        }
-
-    def _error_response(self, request_id: str, code: str, message: str) -> dict:
-        """Return error response."""
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
+            "jsonrpc": "2.0", "id": request_id,
             "error": {"code": -32000, "message": message, "data": {"error_code": code}}
         }
 
 
 def main():
-    """Run Claude MCP server on STDIO."""
-    logger.info("Starting Claude MCP Server")
-    protocol = ClaudeServerProtocol()
+    """Run Bisset MCP server on STDIO."""
+    logger.info("Starting Bisset v2 MCP Server")
+    server = BissetMCPServer()
 
     while True:
         try:
             line = sys.stdin.readline()
             if not line:
                 break
-
             request = json.loads(line)
-            response = protocol.handle_request(request)
+            response = server.handle_request(request)
             print(json.dumps(response, ensure_ascii=False))
             sys.stdout.flush()
         except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error: {e}")
-            error = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32700, "message": "Parse error"}
-            }
+            logger.error("JSON decode error: %s", e)
+            error = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
             print(json.dumps(error))
             sys.stdout.flush()
-        except Exception as e:
+        except Exception:
             logger.exception("Unexpected error")
 
 
