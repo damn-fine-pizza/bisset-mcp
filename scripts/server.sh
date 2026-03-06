@@ -8,7 +8,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ── Colours ──────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
 
 info()    { echo -e "${CYAN}[bisset]${RESET} $*"; }
 success() { echo -e "${GREEN}[bisset]${RESET} $*"; }
@@ -187,18 +187,38 @@ for i in $(seq 1 20); do
     fi
 done
 
-# ── Print claude CLI registration command ─────────────────────
+# ── Print MCP registration commands ───────────────────────────
 if $WITH_MCP; then
     VENV_PY="$VENV_DIR/bin/python3"
     echo ""
     echo -e "${BOLD}══════════════════════════════════════════════════════${RESET}"
-    echo -e "${BOLD}  Register bisset in Claude CLI (run once):${RESET}"
+    echo -e "${BOLD}  Register bisset — Claude CLI (run once):${RESET}"
     echo -e "${BOLD}══════════════════════════════════════════════════════${RESET}"
     echo ""
     echo -e "${CYAN}claude mcp add bisset \\"
     echo -e "  -e WORKFLOW_BACKEND_URL=http://127.0.0.1:${PORT} \\"
     echo -e "  -e PYTHONPATH=${REPO_ROOT} \\"
     echo -e "  -- ${VENV_PY} -m orchestrator.mcp_server${RESET}"
+    echo ""
+    echo -e "${BOLD}══════════════════════════════════════════════════════${RESET}"
+    echo -e "${BOLD}  Register bisset — Copilot CLI / VS Code:${RESET}"
+    echo -e "${BOLD}══════════════════════════════════════════════════════${RESET}"
+    echo ""
+    echo -e "${DIM}Add to ~/.config/github-copilot/mcp.json (or VS Code MCP config):${RESET}"
+    echo ""
+    echo -e "${CYAN}{"
+    echo -e "  \"servers\": {"
+    echo -e "    \"bisset\": {"
+    echo -e "      \"type\": \"stdio\","
+    echo -e "      \"command\": \"${VENV_PY}\","
+    echo -e "      \"args\": [\"-m\", \"orchestrator.mcp_server\"],"
+    echo -e "      \"env\": {"
+    echo -e "        \"PYTHONPATH\": \"${REPO_ROOT}\","
+    echo -e "        \"WORKFLOW_BACKEND_URL\": \"http://127.0.0.1:${PORT}\""
+    echo -e "      }"
+    echo -e "    }"
+    echo -e "  }"
+    echo -e "}${RESET}"
     echo ""
 fi
 
