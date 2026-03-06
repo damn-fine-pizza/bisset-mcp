@@ -221,7 +221,7 @@ from openai import OpenAI
 ROLE = "<nome del ruolo>"
 MCP_URL = os.environ.get('MCP_URL', 'http://mcp:3000')
 MODEL   = os.environ.get('LLM_MODEL', 'gpt-4o-mini')
-client  = OpenAI(api_key=os.environ.get('OPENAI_API_KEY', ''))
+client  = OpenAI(api_key=os.environ.get('LLM_API_KEY', ''))
 app     = Flask(__name__)
 
 SYSTEM_PROMPT = """..."""  # specifico per ruolo
@@ -477,7 +477,7 @@ cp orchestrator/.env.example orchestrator/.env
 
 | Variabile | Default | Descrizione |
 |-----------|---------|-------------|
-| `OPENAI_API_KEY` | _(obbligatoria)_ | API key OpenAI |
+| `LLM_API_KEY` | _(obbligatoria)_ | API key del provider LLM |
 | `LLM_MODEL` | `gpt-4o-mini` | Modello LLM da usare per tutti gli agenti |
 | `MCP_URL` | `http://mcp:3000` | URL interno del context server (non modificare in Docker) |
 
@@ -491,7 +491,7 @@ Il `docker-compose.yml` utilizza **YAML anchors** (`x-agent-env`) per iniettare 
 ```yaml
 x-agent-env: &agent-env
   MCP_URL: http://mcp:3000
-  OPENAI_API_KEY: ${OPENAI_API_KEY}
+  LLM_API_KEY: ${LLM_API_KEY}
   LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
 
 services:
@@ -509,7 +509,7 @@ cd orchestrator
 
 # 1. Configurare le variabili d'ambiente
 cp .env.example .env
-# editare .env: inserire OPENAI_API_KEY
+# editare .env: inserire LLM_API_KEY
 
 # 2. Build e avvio di tutti i servizi
 docker-compose up -d --build
@@ -660,7 +660,7 @@ Il parametro `LLM_MODEL` permette di usare qualsiasi modello compatibile con l'A
 
 ```python
 client = OpenAI(
-    api_key=os.environ.get('OPENAI_API_KEY', 'ollama'),
+    api_key=os.environ.get('LLM_API_KEY', 'ollama'),
     base_url=os.environ.get('LLM_BASE_URL', 'http://localhost:11434/v1'),
 )
 ```
