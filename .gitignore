@@ -22,9 +22,8 @@ env/
 *.sqlite
 *.sqlite3
 
-# Logs
-*.log
-.logs/
+# Runtime / PID files
+.run/
 claude/logs/
 
 # Node
