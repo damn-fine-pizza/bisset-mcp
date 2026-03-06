@@ -327,16 +327,22 @@ class ClaudeServerProtocol:
         }
 
     def _handle_tool_call(self, request_id: str, params: dict) -> dict:
-        """Handle tools/call - placeholder for now."""
-        tool_name = params.get("name")
-        # In real implementation, delegate to workflow_server
+        """Forward tools/call to the workflow_server via HTTP."""
+        from . import client as _client
+
+        tool_name = params.get("name", "")
+        arguments = params.get("arguments", {})
+
+        try:
+            result = _client.call_tool(tool_name, arguments)
+        except Exception as exc:
+            return self._error_response(request_id, "backend_error", str(exc))
+
+        # result is already in Claude SDK TextContent format from the workflow_server
         return {
             "jsonrpc": "2.0",
             "id": request_id,
-            "result": {
-                "content": [{"type": "text", "text": f"Tool {tool_name} called (placeholder)"}],
-                "is_error": False
-            }
+            "result": result,
         }
 
     def _handle_prompts_list(self, request_id: str) -> dict:
@@ -349,13 +355,21 @@ class ClaudeServerProtocol:
         }
 
     def _handle_prompt_get(self, request_id: str, params: dict) -> dict:
-        """Handle prompts/get."""
-        prompt_name = params.get("name")
-        content = self.prompts.get(prompt_name, "")
+        """Handle prompts/get — fetch from workflow_server."""
+        from . import client as _client
+
+        prompt_name = params.get("name", "")
+        try:
+            data = _client.get_prompt(prompt_name)
+            # data is a ResponseWrapper dict; extract the text content
+            text = data.get("content", [{}])[0].get("text", "")
+        except Exception:
+            text = self.prompts.get(prompt_name, f"# {prompt_name}\n(not found)")
+
         return {
             "jsonrpc": "2.0",
             "id": request_id,
-            "result": {"messages": [{"role": "user", "content": content}]}
+            "result": {"messages": [{"role": "user", "content": text}]}
         }
 
     def _handle_resources_list(self, request_id: str) -> dict:
