@@ -25,6 +25,7 @@ claude/.venv/
 
 # Runtime / PID files
 .run/
+.logs/
 claude/logs/
 
 # Node
