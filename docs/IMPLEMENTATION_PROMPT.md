@@ -79,8 +79,7 @@ Your job is to adapt this system for **Claude** while preserving all core featur
      "is_error": true
    }
    ```
-6. Update `requirements.txt` with Claude SDK (latest version)
-7. Add `.env.example` entries for: `CLAUDE_API_KEY`, `CLAUDE_DEFAULT_MODEL`
+6. Update `requirements.txt` with any new dependencies
 
 **Success Criteria:**
 - Server starts without errors: `python -m orchestrator.mcp_server`
@@ -288,7 +287,7 @@ Your job is to adapt this system for **Claude** while preserving all core featur
 1. Section 1: Setup & Environment
    - Prerequisites (Python 3.10+, pip, virtualenv)
    - Clone & install: `pip install -r orchestrator/requirements.txt`
-   - Environment variables: `CLAUDE_API_KEY`, `CLAUDE_DEFAULT_MODEL`, `DATABASE_PATH`
+   - Environment variables: `DATABASE_PATH`, `WORKFLOW_SERVER_PORT`, `MCP_SERVER_HOST`
    - Start workflow_server: `python -m orchestrator.workflow_server`
    - Start mcp_server: `python -m orchestrator.mcp_server`
    - Verify health: `curl http://localhost:8765/health`
@@ -654,9 +653,7 @@ Your job is to adapt this system for **Claude** while preserving all core featur
 **Requirements:**
 1. `.env.example`:
    ```bash
-   CLAUDE_API_KEY=sk-...
-   CLAUDE_DEFAULT_MODEL=claude-3-sonnet
-   DATABASE_PATH=./bisset-db/workflow.db
+   DATABASE_PATH=./orchestrator/workflow_server/workflow.db
    WORKFLOW_SERVER_PORT=8765
    WORKFLOW_PRETTY_JSON_LOGS=1
    BDD_COVERAGE_THRESHOLD=80

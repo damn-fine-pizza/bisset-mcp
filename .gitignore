@@ -14,7 +14,6 @@ build/
 .venv/
 venv/
 env/
-claude/.venv/
 .env
 .python-version
 
@@ -26,7 +25,7 @@ claude/.venv/
 # Runtime / PID files
 .run/
 .logs/
-claude/logs/
+logs/
 
 # Node
 node_modules/

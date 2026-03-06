@@ -37,15 +37,12 @@ cp claude/.env.example claude/.env
 
 | Variable                  | Required | Default                          | Description                          |
 |---------------------------|----------|----------------------------------|--------------------------------------|
-| `CLAUDE_API_KEY`          | Yes*     | —                                | Anthropic API key (sk-ant-…)         |
-| `CLAUDE_DEFAULT_MODEL`    | No       | `claude-3-5-sonnet-20241022`     | Model used when no override is set   |
-| `DATABASE_PATH`           | No       | `./bisset-db/workflow.db`        | SQLite database file path            |
+| `DATABASE_PATH`           | No       | `./orchestrator/workflow_server/workflow.db` | SQLite database file path            |
 | `WORKFLOW_SERVER_PORT`    | No       | `8765`                           | HTTP port for the workflow server    |
 | `WORKFLOW_PRETTY_JSON_LOGS`| No      | `1`                              | `1` = pretty-print JSON logs         |
 | `BDD_COVERAGE_THRESHOLD`  | No       | `80`                             | Minimum Gherkin coverage %           |
 | `MCP_SERVER_HOST`         | No       | `http://localhost:8765`          | URL the MCP proxy uses to reach backend |
 
-\* Required only if the MCP server makes live Claude API calls.
 
 ### Start the workflow server
 
@@ -225,17 +222,11 @@ sqlite3 bisset-db/workflow.db "UPDATE schema_version SET version=6;"
 
 ## 5. Configuration Reference
 
-All variables are read from the process environment or `claude/.env`.
+All variables are read from the process environment or `.env`.
 
 ```dotenv
-# Anthropic API key — required for live Claude API calls
-CLAUDE_API_KEY=sk-ant-api03-...
-
-# Default model when task has no override
-CLAUDE_DEFAULT_MODEL=claude-3-5-sonnet-20241022
-
 # SQLite database file path (created automatically)
-DATABASE_PATH=./bisset-db/workflow.db
+DATABASE_PATH=./orchestrator/workflow_server/workflow.db
 
 # HTTP port for the workflow server
 WORKFLOW_SERVER_PORT=8765
