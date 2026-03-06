@@ -63,7 +63,13 @@ if [[ "$CMD" == "stop" ]]; then
         fi
         rm -f "$WORKFLOW_PID"
     else
-        warn "No PID file found — workflow_server may not be running"
+        # fallback: find uvicorn process by port
+        PID=$(ps aux | grep "uvicorn orchestrator.workflow_server" | grep -v grep | awk '{print $2}' | head -1)
+        if [[ -n "$PID" ]]; then
+            kill "$PID" && success "Stopped workflow_server (PID $PID, found via ps)"
+        else
+            warn "No running workflow_server found"
+        fi
     fi
     exit 0
 fi
