@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-# BissetMCP – Claude Edition — start script
+# BissetMCP – Claude Edition — server management script
 #
 # Usage:
-#   ./claude/scripts/start.sh              # start workflow_server only
-#   ./claude/scripts/start.sh --with-mcp  # also print Claude Desktop config
-#   ./claude/scripts/start.sh --stop      # stop running servers
+#   ./claude/scripts/server.sh              # start workflow_server
+#   ./claude/scripts/server.sh --stop       # stop running server
+#   ./claude/scripts/server.sh --logs       # tail live logs
+#   ./claude/scripts/server.sh --with-mcp   # start + print claude CLI config
 #
 # The script must be run from the repository root, or from inside claude/.
 # ============================================================
@@ -31,6 +32,16 @@ mkdir -p "$LOG_DIR"
 RUN_DIR="$CLAUDE_DIR/logs"
 mkdir -p "$RUN_DIR"
 WORKFLOW_PID="$RUN_DIR/workflow-server.pid"
+
+# ── Stop mode ────────────────────────────────────────────────
+if [[ "${1:-}" == "--logs" ]]; then
+    LOG_FILE="$CLAUDE_DIR/logs/workflow-server.log"
+    if [[ ! -f "$LOG_FILE" ]]; then
+        warn "Log file not found: $LOG_FILE (server never started?)"
+        exit 1
+    fi
+    exec tail -f "$LOG_FILE"
+fi
 
 # ── Stop mode ────────────────────────────────────────────────
 if [[ "${1:-}" == "--stop" ]]; then
@@ -187,10 +198,10 @@ if $WITH_MCP; then
 EOF
     echo -e "${RESET}"
     echo -e "${YELLOW}Note:${RESET} the workflow_server must be running before Claude Desktop starts the MCP server."
-    echo -e "      Run ${BOLD}./claude/scripts/start.sh${RESET} on every login, or add it to your system startup."
+    echo -e "      Run ${BOLD}./claude/scripts/server.sh${RESET} on every login, or add it to your system startup."
     echo ""
 fi
 
 success "Done. workflow_server is running."
-echo -e "  Stop with:  ${BOLD}./claude/scripts/start.sh --stop${RESET}"
+echo -e "  Stop with:  ${BOLD}./claude/scripts/server.sh --stop${RESET}"
 echo -e "  Logs at:    ${BOLD}./claude/logs/workflow-server.log${RESET}"
