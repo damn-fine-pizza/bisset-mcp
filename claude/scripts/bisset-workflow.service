@@ -1,0 +1,21 @@
+[Unit]
+Description=BissetMCP Workflow Server (Claude Edition)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/BissetMCP/claude
+EnvironmentFile=-%h/BissetMCP/claude/.env
+ExecStart=%h/BissetMCP/.venv/bin/python3 -m uvicorn \
+    orchestrator.workflow_server.app:app \
+    --host 127.0.0.1 \
+    --port 8765 \
+    --log-level warning
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bisset-workflow
+
+[Install]
+WantedBy=default.target
