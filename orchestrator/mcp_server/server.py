@@ -35,7 +35,7 @@ class BissetMCPServer:
                  "test_args": {"type": "string"}, "features_dir": {"type": "string"},
              }, "required": ["name", "path"]}},
             {"name": "project_list", "description": "List all projects",
-             "inputSchema": {"type": "object", "properties": {}}},
+             "inputSchema": {"type": "object", "properties": {}, "required": []}},
             {"name": "project_switch", "description": "Switch active project",
              "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]}},
             # Session
@@ -49,7 +49,7 @@ class BissetMCPServer:
             {"name": "session_status", "description": "Get session status with steps and progress",
              "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
             {"name": "session_list", "description": "List sessions (cross-project ok)",
-             "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}}}},
+             "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}}, "required": []}},
             # Pipeline
             {"name": "step_current", "description": "Get current active step",
              "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
