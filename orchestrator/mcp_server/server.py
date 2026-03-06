@@ -42,7 +42,7 @@ class BissetMCPServer:
             {"name": "session_start", "description": "Create session with workflow type",
              "inputSchema": {"type": "object", "properties": {
                  "project_id": {"type": "string"}, "workflow_type": {"type": "string"},
-                 "default_rules": {"type": "array"},
+                 "default_rules": {"type": "array", "items": {"type": "object", "properties": {}}},
              }, "required": ["project_id"]}},
             {"name": "session_resume", "description": "Resume latest pausable session",
              "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]}},
@@ -84,13 +84,13 @@ class BissetMCPServer:
              }, "required": ["step_id"]}},
             {"name": "step_reorder", "description": "Reorder pipeline steps",
              "inputSchema": {"type": "object", "properties": {
-                 "session_id": {"type": "string"}, "step_ids": {"type": "array"},
+                 "session_id": {"type": "string"}, "step_ids": {"type": "array", "items": {"type": "string"}},
              }, "required": ["session_id", "step_ids"]}},
             {"name": "pipeline_view", "description": "Full pipeline with status and dependencies",
              "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
             {"name": "pipeline_set_rules", "description": "Set session DSL rules",
              "inputSchema": {"type": "object", "properties": {
-                 "session_id": {"type": "string"}, "default_rules": {"type": "array"},
+                 "session_id": {"type": "string"}, "default_rules": {"type": "array", "items": {"type": "object", "properties": {}}},
              }, "required": ["session_id", "default_rules"]}},
             # Introspection
             {"name": "pipeline_report", "description": "Pipeline report with stats",
