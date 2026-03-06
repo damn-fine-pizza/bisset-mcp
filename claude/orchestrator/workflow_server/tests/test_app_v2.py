@@ -1,0 +1,204 @@
+"""Tests for Bisset v2 FastAPI Endpoints."""
+import json
+
+import pytest
+from fastapi.testclient import TestClient
+from orchestrator.workflow_server.app import app, _override_db_path
+
+
+@pytest.fixture
+def client():
+    _override_db_path(":memory:")
+    with TestClient(app) as c:
+        yield c
+    _override_db_path(None)
+
+
+def test_health(client):
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "healthy"
+
+
+def test_project_create(client):
+    r = client.post("/project_create", json={
+        "name": "myapp",
+        "path": "/tmp/myapp",
+        "test_runner": "pytest",
+        "adapter": "pytest",
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["is_error"] is False
+    payload = json.loads(data["content"][0]["text"])
+    assert "project_id" in payload
+
+
+def test_session_start(client):
+    # Create project first
+    r1 = client.post("/project_create", json={
+        "name": "myapp", "path": "/tmp/myapp2",
+    })
+    pid = json.loads(r1.json()["content"][0]["text"])["project_id"]
+
+    # Start session
+    r2 = client.post("/session_start", json={
+        "project_id": pid,
+        "workflow_type": "new_project",
+    })
+    assert r2.status_code == 200
+    data = r2.json()
+    assert data["is_error"] is False
+    payload = json.loads(data["content"][0]["text"])
+    assert "session_id" in payload
+
+
+def test_pipeline_view(client):
+    # Create project + session + steps
+    r1 = client.post("/project_create", json={
+        "name": "myapp", "path": "/tmp/myapp3",
+    })
+    pid = json.loads(r1.json()["content"][0]["text"])["project_id"]
+
+    r2 = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "new_project",
+    })
+    sid = json.loads(r2.json()["content"][0]["text"])["session_id"]
+
+    # Add steps
+    client.post("/step_add", json={
+        "session_id": sid, "title": "Step 1", "description": "First", "order": 1,
+    })
+    client.post("/step_add", json={
+        "session_id": sid, "title": "Step 2", "description": "Second", "order": 2,
+    })
+
+    # Get pipeline view
+    r3 = client.get(f"/pipeline_view?session_id={sid}")
+    assert r3.status_code == 200
+    data = r3.json()
+    payload = json.loads(data["content"][0]["text"])
+    assert payload["total_steps"] == 2
+
+
+def test_step_current(client):
+    r1 = client.post("/project_create", json={
+        "name": "myapp", "path": "/tmp/myapp4",
+    })
+    pid = json.loads(r1.json()["content"][0]["text"])["project_id"]
+
+    r2 = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "new_project",
+    })
+    sid = json.loads(r2.json()["content"][0]["text"])["session_id"]
+
+    client.post("/step_add", json={
+        "session_id": sid, "title": "Step 1", "description": "Do it", "order": 1,
+    })
+
+    r3 = client.get(f"/step_current?session_id={sid}")
+    assert r3.status_code == 200
+    data = r3.json()
+    assert data["is_error"] is False
+    payload = json.loads(data["content"][0]["text"])
+    assert payload["title"] == "Step 1"
+
+
+def test_step_skip(client):
+    r1 = client.post("/project_create", json={
+        "name": "myapp", "path": "/tmp/myapp5",
+    })
+    pid = json.loads(r1.json()["content"][0]["text"])["project_id"]
+
+    r2 = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "new_project",
+    })
+    sid = json.loads(r2.json()["content"][0]["text"])["session_id"]
+
+    r3 = client.post("/step_add", json={
+        "session_id": sid, "title": "Step 1", "description": "Do it", "order": 1,
+    })
+    step_id = json.loads(r3.json()["content"][0]["text"])["step_id"]
+
+    r4 = client.post("/step_skip", json={
+        "step_id": step_id, "session_id": sid, "reason": "Not needed",
+    })
+    assert r4.status_code == 200
+    assert r4.json()["is_error"] is False
+
+
+def test_session_status(client):
+    r1 = client.post("/project_create", json={
+        "name": "myapp", "path": "/tmp/myapp6",
+    })
+    pid = json.loads(r1.json()["content"][0]["text"])["project_id"]
+
+    r2 = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "new_project",
+    })
+    sid = json.loads(r2.json()["content"][0]["text"])["session_id"]
+
+    r3 = client.get(f"/session_status?session_id={sid}")
+    assert r3.status_code == 200
+    data = r3.json()
+    assert data["is_error"] is False
+    payload = json.loads(data["content"][0]["text"])
+    assert payload["session"]["status"] == "active"
+
+
+def test_project_list(client):
+    client.post("/project_create", json={
+        "name": "app1", "path": "/tmp/app1",
+    })
+    client.post("/project_create", json={
+        "name": "app2", "path": "/tmp/app2",
+    })
+
+    r = client.get("/project_list")
+    assert r.status_code == 200
+    data = r.json()
+    payload = json.loads(data["content"][0]["text"])
+    assert len(payload["projects"]) == 2
+
+
+def test_event_log(client):
+    r1 = client.post("/project_create", json={
+        "name": "myapp", "path": "/tmp/myapp7",
+    })
+    pid = json.loads(r1.json()["content"][0]["text"])["project_id"]
+
+    r2 = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "new_project",
+    })
+    sid = json.loads(r2.json()["content"][0]["text"])["session_id"]
+
+    r3 = client.get(f"/event_log?session_id={sid}")
+    assert r3.status_code == 200
+    data = r3.json()
+    payload = json.loads(data["content"][0]["text"])
+    # session_started event should be there
+    assert len(payload["events"]) >= 1
+
+
+def test_step_list(client):
+    r1 = client.post("/project_create", json={
+        "name": "myapp", "path": "/tmp/myapp8",
+    })
+    pid = json.loads(r1.json()["content"][0]["text"])["project_id"]
+
+    r2 = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "new_project",
+    })
+    sid = json.loads(r2.json()["content"][0]["text"])["session_id"]
+
+    client.post("/step_add", json={
+        "session_id": sid, "title": "A", "description": "a", "order": 1,
+    })
+    client.post("/step_add", json={
+        "session_id": sid, "title": "B", "description": "b", "order": 2,
+    })
+
+    r3 = client.get(f"/step_list?session_id={sid}")
+    assert r3.status_code == 200
+    payload = json.loads(r3.json()["content"][0]["text"])
+    assert len(payload["steps"]) == 2
