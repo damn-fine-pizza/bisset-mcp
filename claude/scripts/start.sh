@@ -26,7 +26,9 @@ warn()    { echo -e "${YELLOW}[bisset]${RESET} $*"; }
 error()   { echo -e "${RED}[bisset] ERROR:${RESET} $*" >&2; }
 
 # ── PID files ────────────────────────────────────────────────
-RUN_DIR="$REPO_ROOT/.run"
+LOG_DIR="$CLAUDE_DIR/logs"
+mkdir -p "$LOG_DIR"
+RUN_DIR="$CLAUDE_DIR/logs"
 mkdir -p "$RUN_DIR"
 WORKFLOW_PID="$RUN_DIR/workflow-server.pid"
 
@@ -130,13 +132,12 @@ nohup "$PYTHON" -m uvicorn orchestrator.workflow_server.app:app \
     --host 127.0.0.1 \
     --port "$PORT" \
     --log-level warning \
-    > "$REPO_ROOT/.logs/workflow-server.log" 2>&1 &
+    > "$LOG_DIR/workflow-server.log" 2>&1 &
 
 echo $! > "$WORKFLOW_PID"
 WF_PID=$(cat "$WORKFLOW_PID")
-info "workflow_server PID: $WF_PID  |  log: .logs/workflow-server.log"
+info "workflow_server PID: $WF_PID  |  log: ./claude/logs/workflow-server.log"
 
-mkdir -p "$REPO_ROOT/.logs"
 
 # ── Wait for health ───────────────────────────────────────────
 info "Waiting for workflow_server to be ready..."
@@ -148,7 +149,7 @@ for i in $(seq 1 20); do
     sleep 0.5
     if [[ $i -eq 20 ]]; then
         error "workflow_server did not start within 10s."
-        error "Check logs: $REPO_ROOT/.logs/workflow-server.log"
+        error "Check logs: ./claude/logs/workflow-server.log"
         exit 1
     fi
 done
@@ -192,4 +193,4 @@ fi
 
 success "Done. workflow_server is running."
 echo -e "  Stop with:  ${BOLD}./claude/scripts/start.sh --stop${RESET}"
-echo -e "  Logs at:    ${BOLD}.logs/workflow-server.log${RESET}"
+echo -e "  Logs at:    ${BOLD}./claude/logs/workflow-server.log${RESET}"
