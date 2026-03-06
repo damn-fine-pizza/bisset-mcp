@@ -35,7 +35,7 @@ class BissetMCPServer:
                  "test_args": {"type": "string"}, "features_dir": {"type": "string"},
              }, "required": ["name", "path"]}},
             {"name": "project_list", "description": "List all projects",
-             "inputSchema": {"type": "object"}},
+             "inputSchema": {"type": "object", "properties": {}}},
             {"name": "project_switch", "description": "Switch active project",
              "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]}},
             # Session
