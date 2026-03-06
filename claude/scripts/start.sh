@@ -107,7 +107,7 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 PORT="${WORKFLOW_SERVER_PORT:-8765}"
-DB_PATH="${DATABASE_PATH:-$REPO_ROOT/bisset-db/workflow.db}"
+DB_PATH="${DATABASE_PATH:-$CLAUDE_DIR/orchestrator/workflow_server/workflow.db}"
 mkdir -p "$(dirname "$DB_PATH")"
 
 # ── Kill any leftover server ──────────────────────────────────
