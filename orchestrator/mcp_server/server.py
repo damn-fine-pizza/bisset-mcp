@@ -5,13 +5,33 @@ Exposes resources and prompts for Claude context.
 """
 import json
 import logging
+import os
 import sys
+import time
 
 from . import client as _client
 from .prompts import PromptRegistry
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("bisset-mcp-server")
+
+def _setup_logging() -> logging.Logger:
+    """Configure logging to file (never stdout/stderr — STDIO protocol)."""
+    log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "mcp-server.log")
+
+    handler = logging.FileHandler(log_file)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    ))
+
+    _logger = logging.getLogger("bisset-mcp")
+    _logger.setLevel(logging.INFO)
+    _logger.addHandler(handler)
+    _logger.propagate = False
+    return _logger
+
+
+logger = _setup_logging()
 
 
 class BissetMCPServer:
@@ -116,6 +136,8 @@ class BissetMCPServer:
         params = request.get("params", {})
         request_id = request.get("id")
 
+        logger.info("-> %s id=%s", method, request_id)
+
         handlers = {
             "initialize": self._handle_initialize,
             "tools/list": self._handle_tools_list,
@@ -128,7 +150,13 @@ class BissetMCPServer:
 
         handler = handlers.get(method)
         if handler:
-            return handler(request_id, params)
+            response = handler(request_id, params)
+            if "error" in response:
+                logger.warning("<- %s ERROR: %s", method, response["error"].get("message"))
+            else:
+                logger.info("<- %s OK", method)
+            return response
+        logger.warning("<- unknown method: %s", method)
         return self._error_response(request_id, "method_not_found", f"Unknown: {method}")
 
     def _handle_initialize(self, request_id, params) -> dict:
@@ -151,10 +179,14 @@ class BissetMCPServer:
     def _handle_tool_call(self, request_id, params) -> dict:
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
+        logger.info("   tool=%s args=%s", tool_name, json.dumps(arguments, ensure_ascii=False))
+        t0 = time.time()
         try:
             result = _client.call_tool(tool_name, arguments)
         except Exception as exc:
+            logger.error("   tool=%s FAILED: %s (%.1fms)", tool_name, exc, (time.time() - t0) * 1000)
             return self._error_response(request_id, "backend_error", str(exc))
+        logger.info("   tool=%s completed (%.1fms)", tool_name, (time.time() - t0) * 1000)
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     def _handle_prompts_list(self, request_id, params) -> dict:
@@ -179,6 +211,7 @@ class BissetMCPServer:
 
     def _handle_resource_read(self, request_id, params) -> dict:
         uri = params.get("uri", "")
+        logger.info("   resource=%s", uri)
         # Map URIs to tool calls for live data
         uri_tool_map = {
             "project://current": ("project_list", {}),

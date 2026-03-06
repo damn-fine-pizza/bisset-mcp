@@ -27,15 +27,17 @@ usage() {
     echo ""
     echo -e "${BOLD}Commands:${RESET}"
     echo "  start        Start the workflow_server (with hot reload)"
-    echo "  start mcp    Start + print claude CLI registration command"
+    echo "  start mcp    Start + print CLI registration commands"
     echo "  stop         Stop the running workflow_server"
-    echo "  logs         Tail live server logs"
+    echo "  logs         Tail workflow_server logs"
+    echo "  logs mcp     Tail MCP server logs"
     echo "  --help       Show this help"
     echo ""
     echo -e "${BOLD}Examples:${RESET}"
     echo "  ./scripts/server.sh start"
     echo "  ./scripts/server.sh start mcp"
     echo "  ./scripts/server.sh logs"
+    echo "  ./scripts/server.sh logs mcp"
     echo "  ./scripts/server.sh stop"
 }
 
@@ -44,6 +46,14 @@ CMD="${1:-}"
 
 # ── logs ──────────────────────────────────────────────────────
 if [[ "$CMD" == "logs" ]]; then
+    if [[ "${2:-}" == "mcp" ]]; then
+        MCP_LOG="$LOG_DIR/mcp-server.log"
+        if [[ ! -f "$MCP_LOG" ]]; then
+            warn "MCP log not found: $MCP_LOG (MCP server never started?)"
+            exit 1
+        fi
+        exec tail -f "$MCP_LOG"
+    fi
     if [[ ! -f "$LOG_FILE" ]]; then
         warn "Log file not found: $LOG_FILE (server never started?)"
         exit 1
