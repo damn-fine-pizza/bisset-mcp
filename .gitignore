@@ -14,6 +14,7 @@ build/
 .venv/
 venv/
 env/
+claude/.venv/
 .env
 .python-version
 
@@ -22,9 +23,10 @@ env/
 *.sqlite
 *.sqlite3
 
-# Logs
-*.log
+# Runtime / PID files
+.run/
 .logs/
+claude/logs/
 
 # Node
 node_modules/
@@ -43,3 +45,23 @@ Thumbs.db
 
 # MCP generated artifacts (keep stubs, ignore generated spec)
 orchestrator/mcp_workflow_server/resources/spec_current.md
+
+# Pytest cache
+.pytest_cache/
+
+# Mypy cache
+.mypy_cache/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# pip wheel metadata
+pip-wheel-metadata/
+
+# Local databases and runtime data
+bisset-db/
+
+# Node modules in subprojects
+mcp-server/node_modules/

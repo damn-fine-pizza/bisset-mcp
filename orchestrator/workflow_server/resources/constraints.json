@@ -1,5 +1,0 @@
-{
-  "languages": ["python"],
-  "runtimes": ["linux"],
-  "ci": "github-actions"
-}
