@@ -1,51 +1,51 @@
-# BissetMCP — Architettura dettagliata
+# BissetMCP — Detailed Architecture
 
-## Scopo
-Definire componenti, contratti API e diagrammi per il progetto BissetMCP: MCP Context Server, Orchestrator e agenti. Questo documento funge da specifica di riferimento per implementazione, test e deploy.
+## Purpose
+Define components, API contracts, and diagrams for the BissetMCP project: MCP Context Server, Orchestrator, and agents. This document serves as a reference specification for implementation, testing, and deployment.
 
-## Componenti principali
+## Main Components
 
 - MCP Context Server (Node.js/Express)
-  - Porta: 3000
-  - In-memory store responsabile del contesto dello sprint
-  - Endpoints principali:
+  - Port: 3000
+  - In-memory store responsible for the sprint context
+  - Main endpoints:
     - GET /context -> { project, tasks[] }
-    - POST /context -> sovrascrive il contesto
+    - POST /context -> overwrites the context
     - DELETE /context -> reset
     - GET /health -> { status: "ok" }
 
 - Orchestrator (Flask/Python)
-  - Porta: 8080
-  - Endpoints principali:
-    - POST /dispatch { agent: "sw-architect", task: {...} } -> dispatch verso singolo agente
-    - POST /sprint { project: "..." } -> esegue pipeline sequenziale di agenti
+  - Port: 8080
+  - Main endpoints:
+    - POST /dispatch { agent: "sw-architect", task: {...} } -> dispatch to a single agent
+    - POST /sprint { project: "..." } -> runs a sequential agent pipeline
     - GET /health -> { status: "ok" }
 
-- Agenti (microservizi HTTP)
-  - Ogni agente espone POST /task che riceve { task, context }
-  - Deve restituire 200 con body { by: "Agent Name", task: {...}, output: "# Markdown..." }
+- Agents (HTTP microservices)
+  - Each agent exposes POST /task which receives { task, context }
+  - Must return 200 with body { by: "Agent Name", task: {...}, output: "# Markdown..." }
   - Health check: GET /health
 
-## Contratti API (esempi)
+## API Contracts (examples)
 
 MCP Context Server
 
 - GET /context
   Response 200:
   {
-    "project": "Descrizione...",
+    "project": "Description...",
     "tasks": [ { "by": "Senior PM", "task": {...}, "output": "#..." }, ... ]
   }
 
 - POST /context
-  Request 200: body = intero contesto JSON (sovrascrive)
+  Request 200: body = entire JSON context (overwrites)
 
 Orchestrator -> Agent (POST /task)
 
 Request body:
 {
   "task": { "id": "t1", "action": "Produce product backlog", "project": "..." },
-  "context": { /* output corrente del MCP context server */ }
+  "context": { /* current output of the MCP context server */ }
 }
 
 Response 200:
@@ -55,7 +55,7 @@ Response 200:
   "output": "# Product Backlog\n- User story 1..."
 }
 
-## Formato del contesto (schema JSON)
+## Context Format (JSON schema)
 
 {
   "project": "string",
@@ -69,7 +69,7 @@ Response 200:
   ]
 }
 
-## Sequenza: esecuzione /sprint (semplificata)
+## Sequence: /sprint execution (simplified)
 
 1. Client POST /sprint { project }
 2. Orchestrator POST /context -> initialize context with project
@@ -77,30 +77,30 @@ Response 200:
    - POST to agent /task with current context
    - Agent returns output
    - Orchestrator POST /context with appended task output
-4. Al termine, Orchestrator returns aggregated context and artifacts
+4. Upon completion, Orchestrator returns aggregated context and artifacts
 
-## Separazione tra MCP Server e Backend esecutivo
+## Separation Between MCP Server and Execution Backend
 
-Per permettere lo sviluppo iterativo del sistema (ad esempio modifiche eseguite tramite Copilot CLI) è prevista una separazione chiara tra:
+To allow iterative development of the system (for example, changes made via Copilot CLI), a clear separation is planned between:
 
-- MCP Context Server: servizio che espone API per leggere/sovrascrivere il contesto dello sprint e che funge da ponte verso le sessioni Copilot. Espone endpoint pubblici usati dal CLI (es. /context, /health) e supporta hook o endpoint aggiuntivi per sincronizzazione con sessione di sviluppo remota.
+- MCP Context Server: a service that exposes APIs to read/overwrite the sprint context and acts as a bridge to Copilot sessions. It exposes public endpoints used by the CLI (e.g., /context, /health) and supports hooks or additional endpoints for synchronization with a remote development session.
 
-- Execution Backend (Backend esecutivo): servizio separato responsabile dell'esecuzione di comandi, aggiornamento del repository e operazioni distruttive (es. git commit, build, deploy). Comunica con l'Orchestrator e gli agenti tramite API protette, ma non espone direttamente il contesto al CLI.
+- Execution Backend: a separate service responsible for executing commands, updating the repository, and performing destructive operations (e.g., git commit, build, deploy). It communicates with the Orchestrator and agents via protected APIs but does not directly expose the context to the CLI.
 
-Flusso di esempio per sviluppo tramite Copilot CLI:
+Example flow for development via Copilot CLI:
 
-1. Lo sviluppatore usa la Copilot CLI per inviare una richiesta di modifica/aggiornamento al MCP Context Server (es. "aggiorna agent stub X").
-2. MCP Context Server valida la richiesta e la memorizza nel contesto (es. come task con stato di 'pending-change').
-3. Il Backend esecutivo polla o riceve webhook dal MCP Server per task di tipo 'pending-change'.
-4. Backend esecutivo esegue azioni sul codice sorgente (apply patch, git commit, run tests) in un ambiente controllato e riporta lo stato/risultato al MCP Server.
-5. Copilot CLI può interrogare il MCP Server per vedere lo stato delle modifiche e i risultati dei comandi eseguiti dal Backend.
+1. The developer uses Copilot CLI to send a modification/update request to the MCP Context Server (e.g., "update agent stub X").
+2. MCP Context Server validates the request and stores it in the context (e.g., as a task with 'pending-change' status).
+3. The Execution Backend polls or receives a webhook from the MCP Server for 'pending-change' type tasks.
+4. The Execution Backend performs actions on the source code (apply patch, git commit, run tests) in a controlled environment and reports the status/result back to the MCP Server.
+5. Copilot CLI can query the MCP Server to see the status of changes and the results of commands executed by the Backend.
 
-Sicurezza e considerazioni:
-- Comunicazione tra Copilot CLI e MCP Server può essere autenticata tramite token temporanei.
-- Backend esecutivo dovrebbe esporre API solo in rete interna o protetta e accettare richieste firmate dall'MCP Server (HMAC).
-- Tenere un audit trail delle azioni eseguite dal Backend nel contesto (audit entries nel context.tasks.meta).
+Security and considerations:
+- Communication between Copilot CLI and MCP Server can be authenticated via temporary tokens.
+- The Execution Backend should expose APIs only on an internal or protected network and accept requests signed by the MCP Server (HMAC).
+- Maintain an audit trail of actions performed by the Backend in the context (audit entries in context.tasks.meta).
 
-## Diagramma PlantUML (esempio)
+## PlantUML Diagram (example)
 
 ```plantuml
 @startuml
@@ -122,11 +122,10 @@ Orchestrator -> Client: 200 { final context }
 ```
 
 ## Deployment
-- Docker Compose orchestrerà: mcp-server, orchestrator, agent-stubs
-- Variabili d'env per porte e configurazioni LLM (API keys) non commitate
+- Docker Compose will orchestrate: mcp-server, orchestrator, agent-stubs
+- Environment variables for ports and LLM configurations (API keys) not committed
 
-## Considerazioni e prossimi passi
-- Versionare lo schema del contesto (v1, v2)
-- Aggiungere autenticazione opzionale tra Orchestrator e agenti (HMAC) per sicurezza
-- Definire test E2E che validino la pipeline /sprint
-
+## Considerations and Next Steps
+- Version the context schema (v1, v2)
+- Add optional authentication between Orchestrator and agents (HMAC) for security
+- Define E2E tests that validate the /sprint pipeline

@@ -1,46 +1,45 @@
-# Scaffolding Documentazione — BissetMCP
+# Documentation Scaffolding — BissetMCP
 
-Obiettivo: fornire una struttura e template per la documentazione del progetto in modo che lo Scrum Master (Senior Product Manager) possa assegnare e coordinare il lavoro.
+Objective: provide a structure and templates for the project documentation so that the Scrum Master (Senior Product Manager) can assign and coordinate the work.
 
-## Struttura cartelle proposta (/docs)
-- /docs/overview.md            → panoramica progetto, value proposition, obiettivi
-- /docs/api/                   → contratti API
+## Proposed folder structure (/docs)
+- /docs/overview.md            → project overview, value proposition, objectives
+- /docs/api/                   → API contracts
   - api-contract.md
   - endpoints.md
-- /docs/agents/                → documentazione per ciascun agente
+- /docs/agents/                → documentation for each agent
   - agent-template.md
-- /docs/how-to/                → guide di avvio e uso
+- /docs/how-to/                → startup and usage guides
   - start-local.md
   - docker-compose.md
 - /docs/contributing/          → CONTRIBUTING.md, code of conduct
 - /docs/architecture-detailed.md
 
-## Template README per componente
-- Nome componente
-- Scopo
+## Component README Template
+- Component name
+- Purpose
 - Endpoints / API
 - How to run (local, docker)
 - Tests
 - Contributing
 
-## Template API contract
+## API Contract Template
 - Endpoint
-- Metodo
+- Method
 - Request body (schema)
 - Response (schema)
-- Esempi
-- Errori comuni
+- Examples
+- Common errors
 
-## Todo operativi (priorità e assegnazioni suggerite)
-1. doc-structure-create (priority: high) — Creare le cartelle /docs e file stub (Assegnato: Scrum Master)
-2. api-contract-template (priority: high) — Redigere api-contract.md con schema del context e contratti (Assegnato: SW Architect)
-3. agents-readme-template (priority: medium) — Creare agent-template.md con formato richiesto per ogni agente (Assegnato: Senior Developer)
-4. start-and-docker-guides (priority: high) — Documentare docker-compose e start scripts (Assegnato: DevOps / Senior Developer)
-5. contributing-and-coc (priority: medium) — Scrivere CONTRIBUTING.md e CoC (Assegnato: Senior Product Manager)
-6. examples-e2e (priority: low) — Aggiungere esempio di sprint run e output (Assegnato: QA Engineer)
+## Operational Todos (suggested priorities and assignments)
+1. doc-structure-create (priority: high) — Create /docs folders and stub files (Assigned: Scrum Master)
+2. api-contract-template (priority: high) — Draft api-contract.md with context schema and contracts (Assigned: SW Architect)
+3. agents-readme-template (priority: medium) — Create agent-template.md with the required format for each agent (Assigned: Senior Developer)
+4. start-and-docker-guides (priority: high) — Document docker-compose and start scripts (Assigned: DevOps / Senior Developer)
+5. contributing-and-coc (priority: medium) — Write CONTRIBUTING.md and CoC (Assigned: Senior Product Manager)
+6. examples-e2e (priority: low) — Add example of a sprint run and output (Assigned: QA Engineer)
 
-## Note per lo Scrum Master
-- Predisporre PR template e checklist per la documentazione.
-- Coordinare brevi task di 1-2 giorni e assegnare owner per ciascun file.
-- Usare il MCP Context Server per tracciare lo stato dei document tasks come task nel context.
-
+## Notes for the Scrum Master
+- Set up a PR template and checklist for documentation.
+- Coordinate short 1-2 day tasks and assign an owner for each file.
+- Use the MCP Context Server to track the status of document tasks as tasks in the context.

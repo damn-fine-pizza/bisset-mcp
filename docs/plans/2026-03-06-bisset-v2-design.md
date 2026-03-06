@@ -1,19 +1,19 @@
 # Bisset v2 — Design Document
 
-**Data:** 2026-03-06
-**Stato:** Approvato
-**Approccio:** Refactor evolutivo (mantiene FastAPI + SQLite + client HTTP + server.sh)
+**Date:** 2026-03-06
+**Status:** Approved
+**Approach:** Evolutionary refactor (keeps FastAPI + SQLite + HTTP client + server.sh)
 
-## Obiettivo
+## Objective
 
-Bisset e' un workflow orchestrator MCP che guida Claude (e in futuro Copilot) attraverso pipeline di sviluppo definite dall'utente. Ogni step della pipeline e' validato da test Gherkin eseguiti da Bisset. Claude implementa, Bisset valuta. Il loop converge quando tutti gli scenari passano e la coverage supera la soglia.
+Bisset is an MCP workflow orchestrator that guides Claude (and in the future Copilot) through user-defined development pipelines. Each pipeline step is validated by Gherkin tests executed by Bisset. Claude implements, Bisset evaluates. The loop converges when all scenarios pass and coverage exceeds the threshold.
 
-Il .feature e' la funzione di reward. Claude e' l'agente. Il codice e' la policy. Bisset e' l'environment. Ogni retry e' un episodio. La coverage e' lo score.
+The .feature is the reward function. Claude is the agent. The code is the policy. Bisset is the environment. Each retry is an episode. Coverage is the score.
 
-## Architettura
+## Architecture
 
 ```
-Claude Code (o Copilot)
+Claude Code (or Copilot)
         |  STDIO (MCP protocol)
         v
   mcp_server  --HTTP-->  workflow_server  --SQLite-->  ~/.bisset/bisset.db
@@ -24,13 +24,13 @@ Claude Code (o Copilot)
                           (subprocess: pytest/behave/cucumber)
 ```
 
-- **mcp_server** — adapter STDIO sottile, traduce MCP tool calls in HTTP
-- **workflow_server** — tutta la logica: rule engine, gate, test execution
-- **bisset.db** — DB centrale in `~/.bisset/bisset.db`, contiene tutti i progetti
+- **mcp_server** — thin STDIO adapter, translates MCP tool calls into HTTP
+- **workflow_server** — all the logic: rule engine, gate, test execution
+- **bisset.db** — central DB at `~/.bisset/bisset.db`, contains all projects
 
-Zero logica negli endpoint FastAPI. Tutto nell'engine.
+Zero logic in the FastAPI endpoints. Everything in the engine.
 
-## Modello dati
+## Data Model
 
 ```
 PROJECT
@@ -41,14 +41,14 @@ SESSION
   id, project_id, created_at
   workflow_type: new_project | new_feature | generate_tests
   status: active | paused | completed | aborted
-  default_rules (JSON — regole DSL)
+  default_rules (JSON — DSL rules)
 
 STEP
   id, session_id, title, description, order
-  feature_path (path al file .feature)
+  feature_path (path to the .feature file)
   gate: tests_only | human_approval | tests+human
-  depends_on (JSON — lista step_id)
-  rules_override (JSON — regole specifiche per questo step)
+  depends_on (JSON — list of step_id)
+  rules_override (JSON — rules specific to this step)
   status: pending | active | passed | failed | skipped
   retries, current_coverage
   gate_result: null | approved | rejected
@@ -56,7 +56,7 @@ STEP
 TEST_RUN
   id, step_id, session_id
   run_at, passed, failed, coverage
-  runner_output (log completo)
+  runner_output (full log)
 
 EVENT
   id, session_id, timestamp
@@ -64,106 +64,106 @@ EVENT
   data (JSON)
 ```
 
-### Isolamento progetti
+### Project Isolation
 
-- DB centrale: `~/.bisset/bisset.db`
-- Letture cross-progetto permesse (project_list, session_list di altri progetti)
-- Scritture solo sul progetto lockato — ogni tool che modifica stato usa il project_id implicito dal lock
-- Nessun tool operativo accetta project_id come parametro
-- Per cambiare progetto: `project_switch` (chiude lock, riapre)
-- All'apertura: verifica che il path nel DB corrisponda al cwd
+- Central DB: `~/.bisset/bisset.db`
+- Cross-project reads allowed (project_list, session_list of other projects)
+- Writes only on the locked project — every tool that modifies state uses the implicit project_id from the lock
+- No operational tool accepts project_id as a parameter
+- To switch projects: `project_switch` (closes lock, reopens)
+- On open: verifies that the path in the DB matches the cwd
 
-## Tool MCP
+## MCP Tools
 
-### Progetto
+### Project
 
-| Tool | Tipo | Descrizione |
+| Tool | Type | Description |
 |------|------|-------------|
-| `project_detect` | read | Autodetect progetto dal cwd |
-| `project_create` | write | Crea nuovo progetto, locka |
-| `project_list` | read | Lista tutti i progetti nel DB |
-| `project_switch` | write | Cambia progetto attivo |
+| `project_detect` | read | Autodetect project from cwd |
+| `project_create` | write | Create new project, lock it |
+| `project_list` | read | List all projects in the DB |
+| `project_switch` | write | Switch active project |
 
-### Sessione
+### Session
 
-| Tool | Tipo | Descrizione |
+| Tool | Type | Description |
 |------|------|-------------|
-| `session_start` | write | Crea sessione, sceglie workflow_type |
-| `session_resume` | write | Riprende ultima sessione, copia stato step |
-| `session_status` | read | Stato: step, progressi, step corrente |
-| `session_list` | read | Lista sessioni di un progetto (cross-progetto ok) |
+| `session_start` | write | Create session, choose workflow_type |
+| `session_resume` | write | Resume last session, copy step state |
+| `session_status` | read | Status: steps, progress, current step |
+| `session_list` | read | List sessions of a project (cross-project ok) |
 
 ### Pipeline
 
-| Tool | Tipo | Descrizione |
+| Tool | Type | Description |
 |------|------|-------------|
-| `step_current` | read | Step attivo: descrizione, .feature, criteri |
-| `step_run_tests` | write | Bisset esegue test Gherkin, ritorna risultato |
-| `step_complete` | write | Tenta di chiudere lo step (gate check + regole DSL) |
-| `step_skip` | write | Salta con motivazione obbligatoria |
-| `step_list` | read | Lista tutti gli step con stato |
-| `step_add` | write | Aggiunge step (titolo, descrizione, gate, posizione) |
-| `step_remove` | write | Rimuove step (solo se pending) |
-| `step_edit` | write | Modifica titolo/descrizione/gate/feature |
-| `step_reorder` | write | Cambia ordine e dipendenze |
-| `pipeline_view` | read | Pipeline completa con stato e dipendenze |
-| `pipeline_set_rules` | write | Modifica regole DSL della sessione |
+| `step_current` | read | Active step: description, .feature, criteria |
+| `step_run_tests` | write | Bisset runs Gherkin tests, returns result |
+| `step_complete` | write | Attempt to close the step (gate check + DSL rules) |
+| `step_skip` | write | Skip with mandatory reason |
+| `step_list` | read | List all steps with status |
+| `step_add` | write | Add step (title, description, gate, position) |
+| `step_remove` | write | Remove step (only if pending) |
+| `step_edit` | write | Edit title/description/gate/feature |
+| `step_reorder` | write | Change order and dependencies |
+| `pipeline_view` | read | Full pipeline with status and dependencies |
+| `pipeline_set_rules` | write | Modify session DSL rules |
 
 ### Gherkin
 
-| Tool | Tipo | Descrizione |
+| Tool | Type | Description |
 |------|------|-------------|
-| `step_set_feature` | write | Claude invia contenuto Gherkin, Bisset salva su disco e DB |
-| `step_get_feature` | read | Legge il .feature corrente di uno step |
-| `step_validate_feature` | read | Dry-run: verifica sintassi Gherkin senza eseguire |
+| `step_set_feature` | write | Claude sends Gherkin content, Bisset saves to disk and DB |
+| `step_get_feature` | read | Read the current .feature of a step |
+| `step_validate_feature` | read | Dry-run: verify Gherkin syntax without executing |
 
-### Intervista
+### Interview
 
-| Tool | Tipo | Descrizione |
+| Tool | Type | Description |
 |------|------|-------------|
-| `interview_answer` | write | Rispondi alla domanda corrente, ricevi la prossima |
+| `interview_answer` | write | Answer the current question, receive the next one |
 
-### Analisi
+### Analysis
 
-| Tool | Tipo | Descrizione |
+| Tool | Type | Description |
 |------|------|-------------|
-| `analyze_codebase` | write | Analizza progetto esistente, genera step + .feature |
+| `analyze_codebase` | write | Analyze existing project, generate steps + .feature |
 
-### Introspezione
+### Introspection
 
-| Tool | Tipo | Descrizione |
+| Tool | Type | Description |
 |------|------|-------------|
-| `pipeline_report` | read | Report: completati, falliti, coverage, tempo |
-| `event_log` | read | Audit trail della sessione |
+| `pipeline_report` | read | Report: completed, failed, coverage, time |
+| `event_log` | read | Session audit trail |
 
 ## Rule Engine DSL
 
-Regole dichiarative when/then, valutate in ordine. Prima che matcha vince.
+Declarative when/then rules, evaluated in order. First match wins.
 
-### Variabili
+### Variables
 
-| Variabile | Tipo | Descrizione |
+| Variable | Type | Description |
 |-----------|------|-------------|
-| `tests_pass` | bool | Tutti i test passati |
-| `tests_fail` | bool | Almeno un test fallito |
-| `coverage` | float | Percentuale coverage ultimo run |
-| `retries` | int | Volte che lo step e' stato riprovato |
-| `gate` | string | Tipo di gate dello step |
-| `no_tests` | bool | Nessun .feature associato |
-| `step.order` | int | Posizione nella pipeline |
-| `always` | bool | Sempre true (fallback) |
+| `tests_pass` | bool | All tests passed |
+| `tests_fail` | bool | At least one test failed |
+| `coverage` | float | Coverage percentage from last run |
+| `retries` | int | Number of times the step has been retried |
+| `gate` | string | Gate type of the step |
+| `no_tests` | bool | No .feature associated |
+| `step.order` | int | Position in the pipeline |
+| `always` | bool | Always true (fallback) |
 
-### Azioni
+### Actions
 
-| Azione | Effetto |
+| Action | Effect |
 |--------|---------|
-| `advance` | Step done, passa al prossimo |
-| `retry` | Step torna active, incrementa retries |
-| `ask_user` | Chiede conferma all'utente |
-| `abort` | Ferma la pipeline |
-| `skip` | Salta lo step |
+| `advance` | Step done, move to next |
+| `retry` | Step returns to active, increment retries |
+| `ask_user` | Ask user for confirmation |
+| `abort` | Stop the pipeline |
+| `skip` | Skip the step |
 
-### Esempio
+### Example
 
 ```yaml
 rules:
@@ -181,50 +181,50 @@ rules:
     then: abort
 ```
 
-Ogni sessione ha `default_rules`. Ogni step puo' avere `rules_override`.
+Each session has `default_rules`. Each step can have `rules_override`.
 
 ## Workflow Types
 
 ### new_project
 
 ```
-1. interview  — domande su scope, stack, vincoli
-2. design     — Claude propone architettura, utente approva
-3. generate   — Claude genera step + .feature per ogni componente
-4. execute    — step-by-step gated: implementa -> test -> advance
+1. interview  — questions about scope, stack, constraints
+2. design     — Claude proposes architecture, user approves
+3. generate   — Claude generates steps + .feature for each component
+4. execute    — step-by-step gated: implement -> test -> advance
 ```
 
 ### new_feature
 
 ```
-1. analyze    — Claude analizza codebase esistente
-2. interview  — domande mirate sulla feature
-3. generate   — Claude genera step + .feature per la feature
+1. analyze    — Claude analyzes existing codebase
+2. interview  — targeted questions about the feature
+3. generate   — Claude generates steps + .feature for the feature
 4. execute    — step-by-step gated
 ```
 
 ### generate_tests
 
 ```
-1. analyze    — Claude analizza codebase (API, modelli, logic, UI)
-2. generate   — Claude genera .feature per tutto
-3. validate   — Bisset esegue test, report di cosa passa e cosa no
+1. analyze    — Claude analyzes codebase (API, models, logic, UI)
+2. generate   — Claude generates .feature for everything
+3. validate   — Bisset runs tests, reports what passes and what doesn't
 ```
 
-Le fasi sono meta-step che producono gli step concreti. Una volta generati, la sessione ha solo step — le fasi spariscono. L'utente puo' modificare gli step generati prima di eseguirli.
+The phases are meta-steps that produce the concrete steps. Once generated, the session only has steps — the phases disappear. The user can modify the generated steps before executing them.
 
-## Test Runner e Adapter
+## Test Runner and Adapter
 
-Bisset esegue i test in autonomia. Claude non tocca i risultati.
+Bisset runs the tests autonomously. Claude does not touch the results.
 
 ```
 step_run_tests
-  -> legge feature_path dello step
+  -> reads feature_path of the step
   -> subprocess.run([test_runner, feature_path, *test_args])
-  -> adapter parsa output
-  -> salva in DB: passed, failed, coverage, raw output
-  -> applica regole DSL
-  -> ritorna azione a Claude
+  -> adapter parses output
+  -> saves to DB: passed, failed, coverage, raw output
+  -> applies DSL rules
+  -> returns action to Claude
 ```
 
 ### Adapter
@@ -241,26 +241,26 @@ class AdapterResult:
 | Adapter | Runner | Parsing |
 |---------|--------|---------|
 | `pytest` | `pytest --tb=short -q` | Exit code + stdout |
-| `behave` | `behave --format json` | JSON nativo |
-| `cucumber` | `cucumber --format json` | JSON nativo |
-| `generic` | Qualsiasi comando | Solo exit code |
+| `behave` | `behave --format json` | Native JSON |
+| `cucumber` | `cucumber --format json` | Native JSON |
+| `generic` | Any command | Exit code only |
 
-## Risorse MCP
+## MCP Resources
 
-Leggono dati reali dal DB:
+Read real data from the DB:
 
-| URI | Contenuto |
+| URI | Content |
 |-----|-----------|
-| `project://current` | Progetto attivo: nome, path, config |
-| `session://current` | Sessione: workflow_type, status, progresso |
-| `pipeline://current` | Step con stato, dipendenze, regole |
-| `history://sessions` | Sessioni precedenti del progetto |
+| `project://current` | Active project: name, path, config |
+| `session://current` | Session: workflow_type, status, progress |
+| `pipeline://current` | Steps with status, dependencies, rules |
+| `history://sessions` | Previous sessions of the project |
 
-## Prompts MCP
+## MCP Prompts
 
-Template statici + variabili dinamiche (dal DB e dal contesto Claude):
+Static templates + dynamic variables (from DB and Claude context):
 
-| Prompt | Fase |
+| Prompt | Phase |
 |--------|------|
 | `bisset/interviewer` | interview |
 | `bisset/architect` | design |
@@ -268,52 +268,52 @@ Template statici + variabili dinamiche (dal DB e dal contesto Claude):
 | `bisset/implementer` | execute |
 | `bisset/test-writer` | generate |
 
-### Composizione prompt
+### Prompt Composition
 
-Template con variabili `{{...}}`:
-- **Variabili DB** (auto): `step.*`, `project.*`, `session.*`
-- **Variabili contesto** (da Claude): `context.directory_structure`, `context.patterns`, `context.relevant_files`
+Templates with `{{...}}` variables:
+- **DB variables** (auto): `step.*`, `project.*`, `session.*`
+- **Context variables** (from Claude): `context.directory_structure`, `context.patterns`, `context.relevant_files`
 
-Claude chiama `prompt_load("bisset/implementer", context={...})` passando le variabili di contesto. Bisset fonde DB + context e ritorna il prompt composto.
+Claude calls `prompt_load("bisset/implementer", context={...})` passing the context variables. Bisset merges DB + context and returns the composed prompt.
 
-## Loop di convergenza
+## Convergence Loop
 
 ```
-Claude genera codice
+Claude generates code
     |
-Bisset esegue .feature (step_run_tests)
+Bisset runs .feature (step_run_tests)
     |
-Risultato: 3/5 pass, coverage 60%
+Result: 3/5 pass, coverage 60%
     |
-Regole DSL: retry (coverage < 80)
+DSL rules: retry (coverage < 80)
     |
-Claude riceve feedback strutturato: "scenari X e Y falliti perche' Z"
+Claude receives structured feedback: "scenarios X and Y failed because Z"
     |
-Claude corregge
+Claude corrects
     |
-Bisset esegue .feature
+Bisset runs .feature
     |
 5/5 pass, coverage 100% -> advance
 ```
 
-Early stopping: `retries >= 3 -> ask_user`. Se Claude non converge, serve un umano.
+Early stopping: `retries >= 3 -> ask_user`. If Claude does not converge, a human is needed.
 
-## Cosa tenere dal codice attuale
+## What to Keep from the Current Code
 
-| Componente | Azione |
+| Component | Action |
 |-----------|--------|
-| `storage.py` | Riscrivere schema, mantenere migration system |
-| `app.py` | Riscrivere endpoint, mantenere FastAPI + ResponseWrapper |
-| `client.py` | Tenere, aggiornare tool mapping |
-| `server.sh` | Tenere (hot reload + color logging gia' fatto) |
-| `engine.py` | Riscrivere completamente (rule engine + gate logic) |
-| `server.py` | Riscrivere con SDK MCP ufficiale |
-| `prompts.py` | Riscrivere come template system |
+| `storage.py` | Rewrite schema, keep migration system |
+| `app.py` | Rewrite endpoints, keep FastAPI + ResponseWrapper |
+| `client.py` | Keep, update tool mapping |
+| `server.sh` | Keep (hot reload + color logging already done) |
+| `engine.py` | Rewrite completely (rule engine + gate logic) |
+| `server.py` | Rewrite with official MCP SDK |
+| `prompts.py` | Rewrite as template system |
 
-## Cosa eliminare
+## What to Remove
 
 - ComplexityAnalyzer / model routing
-- 20 file `.agent.md` (specifici per Copilot)
-- Catalogo domande hardcoded
+- 20 `.agent.md` files (Copilot-specific)
+- Hardcoded question catalog
 - Background jobs / async mode
-- Prompt statici per fasi hardcoded
+- Static prompts for hardcoded phases

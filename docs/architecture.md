@@ -1,33 +1,33 @@
-# BissetMCP — Documentazione dell'architettura
+# BissetMCP — Architecture Documentation
 
-## Indice
+## Table of Contents
 
-1. [Panoramica](#1-panoramica)
-2. [Struttura del repository](#2-struttura-del-repository)
-3. [Componenti del sistema](#3-componenti-del-sistema)
+1. [Overview](#1-overview)
+2. [Repository Structure](#2-repository-structure)
+3. [System Components](#3-system-components)
    - 3.1 [MCP Context Server](#31-mcp-context-server)
    - 3.2 [Orchestrator](#32-orchestrator)
-   - 3.3 [Agenti Scrum](#33-agenti-scrum)
-4. [Flusso multi-agente Scrum](#4-flusso-multi-agente-scrum)
-5. [Dettaglio dei ruoli e system prompt](#5-dettaglio-dei-ruoli-e-system-prompt)
-6. [Contratto API](#6-contratto-api)
-7. [Configurazione e variabili d'ambiente](#7-configurazione-e-variabili-dampiente)
-8. [Avvio con Docker Compose](#8-avvio-con-docker-compose)
-9. [Aggiungere un nuovo agente](#9-aggiungere-un-nuovo-agente)
-10. [Note su estensioni future](#10-note-su-estensioni-future)
+   - 3.3 [Scrum Agents](#33-scrum-agents)
+4. [Multi-Agent Scrum Flow](#4-multi-agent-scrum-flow)
+5. [Role Details and System Prompts](#5-role-details-and-system-prompts)
+6. [API Contract](#6-api-contract)
+7. [Configuration and Environment Variables](#7-configuration-and-environment-variables)
+8. [Starting with Docker Compose](#8-starting-with-docker-compose)
+9. [Adding a New Agent](#9-adding-a-new-agent)
+10. [Notes on Future Extensions](#10-notes-on-future-extensions)
 
 ---
 
-## 1. Panoramica
+## 1. Overview
 
-BissetMCP è un sistema multi-agente che simula un **team Scrum completo** composto da figure senior. Ogni membro del team è un agente autonomo (servizio Flask + LLM OpenAI) che:
+BissetMCP is a multi-agent system that simulates a **complete Scrum team** composed of senior roles. Each team member is an autonomous agent (Flask service + OpenAI LLM) that:
 
-- riceve un task via webhook HTTP
-- legge il contesto accumulato dagli agenti precedenti dal **MCP Context Server**
-- produce il proprio output in markdown (charter, backlog, wireframe, schema SQL, codice, ecc.)
-- scrive il risultato nel contesto condiviso, rendendolo disponibile agli agenti successivi
+- receives a task via HTTP webhook
+- reads the context accumulated by previous agents from the **MCP Context Server**
+- produces its own output in markdown (charter, backlog, wireframe, SQL schema, code, etc.)
+- writes the result to the shared context, making it available to subsequent agents
 
-L'**Orchestrator** coordina l'intera pipeline esposta tramite un singolo endpoint `POST /sprint`.
+The **Orchestrator** coordinates the entire pipeline exposed through a single `POST /sprint` endpoint.
 
 ```
 Client
@@ -37,26 +37,26 @@ Client
                                      ┌─────────┼──────────────────┐
                                      │         │                  │
                                      ▼         ▼                  ▼
-                               MCP Context  Agent 1 ... N    (sequenziale)
+                               MCP Context  Agent 1 ... N    (sequential)
                                Server :3000
-                               (store condiviso)
+                               (shared store)
 ```
 
 ---
 
-## 2. Struttura del repository
+## 2. Repository Structure
 
 ```
 BissetMCP/
 ├── docs/
-│   └── architecture.md          ← questo file
+│   └── architecture.md          ← this file
 ├── mcp-example/
 │   ├── index.js                 ← MCP Context Server (Node.js/Express)
 │   ├── package.json
-│   └── start-mcp.sh             ← helper per avvio standalone senza Docker
+│   └── start-mcp.sh             ← helper for standalone startup without Docker
 └── orchestrator/
-    ├── .env.example             ← template variabili d'ambiente
-    ├── docker-compose.yml       ← definizione di tutti i servizi
+    ├── .env.example             ← environment variables template
+    ├── docker-compose.yml       ← definition of all services
     ├── orchestrator/
     │   ├── app.py               ← Orchestrator Flask (/dispatch + /sprint)
     │   └── requirements.txt
@@ -89,30 +89,30 @@ BissetMCP/
 
 ---
 
-## 3. Componenti del sistema
+## 3. System Components
 
 ### 3.1 MCP Context Server
 
-**Percorso:** `mcp-example/`  
-**Runtime:** Node.js 18, Express  
-**Porta:** `3000`
+**Path:** `mcp-example/`
+**Runtime:** Node.js 18, Express
+**Port:** `3000`
 
-Store in-memory condiviso tra tutti gli agenti. Persiste il contesto dello sprint corrente (progetto + output accumulati di ogni agente) per tutta la durata della pipeline.
+In-memory store shared across all agents. Persists the current sprint context (project + accumulated output of each agent) for the duration of the pipeline.
 
 #### Endpoints
 
-| Metodo | Path | Descrizione |
+| Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/context` | Restituisce il contesto corrente (JSON) |
-| `POST` | `/context` | Sovrascrive il contesto con il body JSON |
-| `DELETE` | `/context` | Resetta il contesto a `{ tasks: [] }` |
-| `GET` | `/health` | Health check — risponde `{ status: "ok" }` |
+| `GET` | `/context` | Returns the current context (JSON) |
+| `POST` | `/context` | Overwrites the context with the JSON body |
+| `DELETE` | `/context` | Resets the context to `{ tasks: [] }` |
+| `GET` | `/health` | Health check — responds with `{ status: "ok" }` |
 
-#### Struttura del contesto
+#### Context Structure
 
 ```json
 {
-  "project": "Descrizione del progetto inviata dall'utente",
+  "project": "Project description sent by the user",
   "tasks": [
     {
       "by": "Senior Product Manager",
@@ -128,21 +128,21 @@ Store in-memory condiviso tra tutti gli agenti. Persiste il contesto dello sprin
 }
 ```
 
-> **Nota:** il context server è in-memory. Al riavvio del container il contesto viene perso. Per persistenza vedere [§10](#10-note-su-estensioni-future).
+> **Note:** the context server is in-memory. When the container restarts, the context is lost. For persistence see [§10](#10-notes-on-future-extensions).
 
 ---
 
 ### 3.2 Orchestrator
 
-**Percorso:** `orchestrator/orchestrator/app.py`  
-**Runtime:** Python 3.11, Flask  
-**Porta:** `8080`
+**Path:** `orchestrator/orchestrator/app.py`
+**Runtime:** Python 3.11, Flask
+**Port:** `8080`
 
-Espone due endpoint:
+Exposes two endpoints:
 
 #### `POST /dispatch`
 
-Dispatch diretto a un singolo agente per nome. Utile per testing o invocazioni one-shot.
+Direct dispatch to a single agent by name. Useful for testing or one-shot invocations.
 
 ```json
 // Request
@@ -154,11 +154,11 @@ Dispatch diretto a un singolo agente per nome. Utile per testing o invocazioni o
 
 #### `POST /sprint`
 
-Avvia la pipeline Scrum completa in sequenza. Ogni agente viene chiamato nell'ordine corretto e vede il lavoro di tutti quelli precedenti.
+Starts the complete Scrum pipeline in sequence. Each agent is called in the correct order and sees the work of all previous ones.
 
 ```json
 // Request
-{ "project": "App di prenotazione ristoranti con pagamenti e recensioni" }
+{ "project": "Restaurant booking app with payments and reviews" }
 
 // Response
 {
@@ -171,7 +171,7 @@ Avvia la pipeline Scrum completa in sequenza. Ogni agente viene chiamato nell'or
 }
 ```
 
-**Pipeline Scrum (ordine fisso):**
+**Scrum Pipeline (fixed order):**
 
 ```python
 SCRUM_PIPELINE = [
@@ -185,46 +185,46 @@ SCRUM_PIPELINE = [
 ]
 ```
 
-Ogni step ha un timeout di **120 secondi** per completare la chiamata LLM.
+Each step has a **120-second** timeout to complete the LLM call.
 
 ---
 
-### 3.3 Agenti Scrum
+### 3.3 Scrum Agents
 
-Ogni agente segue la stessa struttura interna:
+Each agent follows the same internal structure:
 
 ```
 /webhook (POST)
     │
-    ├── 1. Legge il contesto completo da MCP  GET /context
-    │         (project + output di tutti gli agenti precedenti)
+    ├── 1. Reads the full context from MCP  GET /context
+    │         (project + output of all previous agents)
     │
-    ├── 2. Costruisce il messaggio per il LLM
-    │         system:  system prompt specifico del ruolo
-    │         user:    contesto accumulato + "produce your contribution"
+    ├── 2. Builds the message for the LLM
+    │         system:  role-specific system prompt
+    │         user:    accumulated context + "produce your contribution"
     │
-    ├── 3. Chiama OpenAI Chat Completions API
+    ├── 3. Calls OpenAI Chat Completions API
     │         model: LLM_MODEL (default: gpt-4o-mini)
     │
-    ├── 4. Scrive l'output nel contesto MCP   POST /context
+    ├── 4. Writes the output to the MCP context   POST /context
     │
-    └── 5. Risponde { status, role, output }
+    └── 5. Responds { status, role, output }
 ```
 
-**Pattern comune a tutti gli agenti** (template):
+**Common pattern across all agents** (template):
 
 ```python
 from flask import Flask, request, jsonify
 import os, requests
 from openai import OpenAI
 
-ROLE = "<nome del ruolo>"
+ROLE = "<role name>"
 MCP_URL = os.environ.get('MCP_URL', 'http://mcp:3000')
 MODEL   = os.environ.get('LLM_MODEL', 'gpt-4o-mini')
 client  = OpenAI(api_key=os.environ.get('LLM_API_KEY', ''))
 app     = Flask(__name__)
 
-SYSTEM_PROMPT = """..."""  # specifico per ruolo
+SYSTEM_PROMPT = """..."""  # role-specific
 
 def _get_context_summary():
     ctx = requests.get(f"{MCP_URL}/context", timeout=5).json()
@@ -257,184 +257,184 @@ def webhook():
 
 ---
 
-## 4. Flusso multi-agente Scrum
+## 4. Multi-Agent Scrum Flow
 
 ```
 POST /sprint
-{"project": "App di prenotazione ristoranti con pagamenti e recensioni"}
+{"project": "Restaurant booking app with payments and reviews"}
         │
         ▼
-[Orchestrator] Reset MCP context → inizializza {"project": "...", "tasks": []}
+[Orchestrator] Reset MCP context → initializes {"project": "...", "tasks": []}
         │
         ├──► [Senior Product Manager]
-        │         Legge: solo "project"
-        │         Produce: Project Charter (vision, KPI, roadmap, rischi)
-        │         Scrive: contesto += { by: "Senior Product Manager", output: "..." }
+        │         Reads: only "project"
+        │         Produces: Project Charter (vision, KPIs, roadmap, risks)
+        │         Writes: context += { by: "Senior Product Manager", output: "..." }
         │
         ├──► [Product Owner]
-        │         Legge: project + charter del PM
-        │         Produce: Backlog (epics, user stories, acceptance criteria, story points, MoSCoW, Sprint 1)
-        │         Scrive: contesto += { by: "Product Owner", output: "..." }
+        │         Reads: project + PM charter
+        │         Produces: Backlog (epics, user stories, acceptance criteria, story points, MoSCoW, Sprint 1)
+        │         Writes: context += { by: "Product Owner", output: "..." }
         │
         ├──► [Senior UX Designer]
-        │         Legge: project + charter + backlog
-        │         Produce: UX doc (personas, user flows, wireframe ASCII, design system)
-        │         Scrive: contesto += { by: "Senior UX Designer", output: "..." }
+        │         Reads: project + charter + backlog
+        │         Produces: UX doc (personas, user flows, ASCII wireframe, design system)
+        │         Writes: context += { by: "Senior UX Designer", output: "..." }
         │
         ├──► [Senior Database Engineer]
-        │         Legge: project + charter + backlog + UX
-        │         Produce: Schema SQL DDL, ER diagram, indici, migration notes
-        │         Scrive: contesto += { by: "Senior Database Engineer", output: "..." }
+        │         Reads: project + charter + backlog + UX
+        │         Produces: SQL DDL schema, ER diagram, indexes, migration notes
+        │         Writes: context += { by: "Senior Database Engineer", output: "..." }
         │
         ├──► [Software Architect]
-        │         Legge: tutto il precedente
-        │         Produce: architettura (componenti, tech stack, API contract, NFR)
-        │         Scrive: contesto += { by: "Software Architect", output: "..." }
+        │         Reads: all previous output
+        │         Produces: architecture (components, tech stack, API contract, NFRs)
+        │         Writes: context += { by: "Software Architect", output: "..." }
         │
         ├──► [Senior Backend Developer]
-        │         Legge: tutto il precedente (incluso schema DB e API contract)
-        │         Produce: codice backend (modelli, endpoint critici, test)
-        │         Scrive: contesto += { by: "Senior Backend Developer", output: "..." }
+        │         Reads: all previous output (including DB schema and API contract)
+        │         Produces: backend code (models, critical endpoints, tests)
+        │         Writes: context += { by: "Senior Backend Developer", output: "..." }
         │
         └──► [Senior Frontend Developer]
-                  Legge: tutto il precedente (incluso UX e API contract)
-                  Produce: codice frontend React/TS (componenti, hooks, routing, state)
-                  Scrive: contesto += { by: "Senior Frontend Developer", output: "..." }
+                  Reads: all previous output (including UX and API contract)
+                  Produces: frontend React/TS code (components, hooks, routing, state)
+                  Writes: context += { by: "Senior Frontend Developer", output: "..." }
                          │
                          ▼
-              [Orchestrator] Restituisce sprint_results + final_context
+              [Orchestrator] Returns sprint_results + final_context
 ```
 
 ---
 
-## 5. Dettaglio dei ruoli e system prompt
+## 5. Role Details and System Prompts
 
 ### Senior Product Manager (`agent-senior-product-manager`)
-**Porta:** 8108  
-**Output atteso:** Project Charter strutturato
+**Port:** 8108
+**Expected output:** Structured Project Charter
 
 ```
-Produce in markdown:
-- Executive summary e vision
-- Goals e success metrics (KPI)
+Produces in markdown:
+- Executive summary and vision
+- Goals and success metrics (KPIs)
 - Scope (in/out)
 - Stakeholder map
-- Roadmap ad alto livello (milestones)
-- Rischi e dipendenze
+- High-level roadmap (milestones)
+- Risks and dependencies
 ```
 
 ---
 
 ### Product Owner (`agent-product-owner`)
-**Porta:** 8102  
-**Output atteso:** Product Backlog pronto per lo sviluppo
+**Port:** 8102
+**Expected output:** Development-ready Product Backlog
 
 ```
-Produce in markdown:
+Produces in markdown:
 - Epics (2-4)
 - User stories (As a <role> I want <feature> so that <benefit>)
 - Acceptance criteria (Given/When/Then)
 - Story points (Fibonacci: 1,2,3,5,8,13)
 - MoSCoW priority
-- Sprint 1 backlog selection (8-13 punti)
+- Sprint 1 backlog selection (8-13 points)
 ```
 
 ---
 
 ### Senior UX Designer (`agent-ux-designer-senior`)
-**Porta:** 8107  
-**Output atteso:** UX Design Document
+**Port:** 8107
+**Expected output:** UX Design Document
 
 ```
-Produce in markdown:
-- User personas (2-3, con goals e pain points)
-- User flows (step-by-step per i journey principali)
-- Wireframe di ogni schermata principale (ASCII art)
+Produces in markdown:
+- User personas (2-3, with goals and pain points)
+- User flows (step-by-step for main journeys)
+- Wireframe of each main screen (ASCII art)
 - Navigation map / information architecture
 - Component inventory
-- Design system: palette colori, tipografia, spacing tokens
+- Design system: color palette, typography, spacing tokens
 ```
 
 ---
 
 ### Senior Database Engineer (`agent-senior-database-engineer`)
-**Porta:** 8105  
-**Output atteso:** Database Design Document
+**Port:** 8105
+**Expected output:** Database Design Document
 
 ```
-Produce in markdown:
-- Entity-Relationship diagram (testuale/ASCII)
-- SQL DDL completo (PostgreSQL): CREATE TABLE, vincoli, FK
-- Strategia degli indici (colonne e motivazione)
-- Dati di seed di esempio
-- Note sulla migration strategy
-- Considerazioni su caching (Redis keys, TTL)
+Produces in markdown:
+- Entity-Relationship diagram (textual/ASCII)
+- Complete SQL DDL (PostgreSQL): CREATE TABLE, constraints, FKs
+- Index strategy (columns and rationale)
+- Example seed data
+- Migration strategy notes
+- Caching considerations (Redis keys, TTL)
 ```
 
 ---
 
 ### Software Architect (`agent-sw-architect`)
-**Porta:** 8101  
-**Output atteso:** Architecture Document
+**Port:** 8101
+**Expected output:** Architecture Document
 
 ```
-Produce in markdown:
-- Panoramica dell'architettura (components diagram ASCII)
-- Tech stack con motivazione (backend, frontend, DB, infra)
-- API contract completo (metodo, path, request body, response)
-- Strategia di autenticazione/autorizzazione
-- NFR: scalabilità, sicurezza, osservabilità
-- Struttura cartelle/moduli per backend e frontend
+Produces in markdown:
+- Architecture overview (ASCII components diagram)
+- Tech stack with rationale (backend, frontend, DB, infra)
+- Complete API contract (method, path, request body, response)
+- Authentication/authorization strategy
+- NFRs: scalability, security, observability
+- Folder/module structure for backend and frontend
 ```
 
 ---
 
 ### Senior Backend Developer (`agent-senior-developer`)
-**Porta:** 8103  
-**Output atteso:** Backend Implementation Document
+**Port:** 8103
+**Expected output:** Backend Implementation Document
 
 ```
-Produce in markdown:
-- File tree del modulo/servizio
-- Modelli dati / DTO (dataclass Python o TypeScript interface)
-- Implementazione dei 3 endpoint critici (codice completo, non pseudocodice)
-- Data access layer (ORM o query raw)
-- Pattern di validazione input e gestione errori
-- Test unitari per la business logic critica
+Produces in markdown:
+- Module/service file tree
+- Data models / DTOs (Python dataclass or TypeScript interface)
+- Implementation of the 3 critical endpoints (complete code, not pseudocode)
+- Data access layer (ORM or raw queries)
+- Input validation and error handling patterns
+- Unit tests for critical business logic
 ```
 
 ---
 
 ### Senior Frontend Developer (`agent-senior-frontend-developer`)
-**Porta:** 8104  
-**Output atteso:** Frontend Implementation Document
+**Port:** 8104
+**Expected output:** Frontend Implementation Document
 
 ```
-Produce in markdown:
-- Component tree / struttura pagine
-- Implementazione dei 3 componenti principali (React + TypeScript)
-- API integration layer (custom hooks o service functions)
+Produces in markdown:
+- Component tree / page structure
+- Implementation of the 3 main components (React + TypeScript)
+- API integration layer (custom hooks or service functions)
 - State management (Zustand / Redux Toolkit / React Query)
-- Configurazione routing
-- Note sul layout responsivo in linea con i wireframe UX
+- Routing configuration
+- Notes on responsive layout aligned with UX wireframes
 ```
 
 ---
 
 ### Senior QA Engineer (`agent-senior-qa-engineer`)
-**Porta:** 8106  
-**Nota:** Presente come servizio ma **non incluso nel pipeline Scrum di default**. Può essere invocato singolarmente via `/dispatch` oppure aggiunto a `SCRUM_PIPELINE` nell'orchestrator.
+**Port:** 8106
+**Note:** Present as a service but **not included in the default Scrum pipeline**. Can be invoked individually via `/dispatch` or added to `SCRUM_PIPELINE` in the orchestrator.
 
 ---
 
-## 6. Contratto API
+## 6. API Contract
 
 ### MCP Context Server `:3000`
 
 ```
 GET    /context          → 200 { project, tasks: [...] }
 POST   /context          → 200 { ok: true }         body: { project, tasks }
-DELETE /context          → 200 { ok: true }         reset a { tasks: [] }
+DELETE /context          → 200 { ok: true }         resets to { tasks: [] }
 GET    /health           → 200 { status: "ok" }
 ```
 
@@ -442,11 +442,11 @@ GET    /health           → 200 { status: "ok" }
 
 ```
 POST /dispatch
-  body:     { "agent": "<nome>", "task": { ... } }
-  response: { "dispatched_to": "agent-<nome>", "status_code": N, "response": { ... } }
+  body:     { "agent": "<name>", "task": { ... } }
+  response: { "dispatched_to": "agent-<name>", "status_code": N, "response": { ... } }
 
 POST /sprint
-  body:     { "project": "<descrizione libera del progetto>" }
+  body:     { "project": "<free-form project description>" }
   response: {
     "sprint_results": [
       { "agent": "senior-product-manager", "status_code": 200, "output": "..." },
@@ -456,37 +456,37 @@ POST /sprint
   }
 ```
 
-### Agenti `:800x`
+### Agents `:800x`
 
 ```
 POST /webhook
-  body:     { "project": "...", ...payload opzionale }
-  response: { "status": "ok", "role": "<nome ruolo>", "output": "<markdown>" }
+  body:     { "project": "...", ...optional payload }
+  response: { "status": "ok", "role": "<role name>", "output": "<markdown>" }
 ```
 
 ---
 
-## 7. Configurazione e variabili d'ambiente
+## 7. Configuration and Environment Variables
 
-Creare un file `.env` nella cartella `orchestrator/` a partire da `.env.example`:
+Create a `.env` file in the `orchestrator/` folder starting from `.env.example`:
 
 ```bash
 cp orchestrator/.env.example orchestrator/.env
-# editare .env e inserire la chiave OpenAI
+# edit .env and enter your OpenAI key
 ```
 
-| Variabile | Default | Descrizione |
+| Variable | Default | Description |
 |-----------|---------|-------------|
-| `LLM_API_KEY` | _(obbligatoria)_ | API key del provider LLM |
-| `LLM_MODEL` | `gpt-4o-mini` | Modello LLM da usare per tutti gli agenti |
-| `MCP_URL` | `http://mcp:3000` | URL interno del context server (non modificare in Docker) |
+| `LLM_API_KEY` | _(required)_ | API key for the LLM provider |
+| `LLM_MODEL` | `gpt-4o-mini` | LLM model to use for all agents |
+| `MCP_URL` | `http://mcp:3000` | Internal URL of the context server (do not change in Docker) |
 
-> **Suggerimento modelli:**
-> - `gpt-4o-mini` — veloce, economico, ottimo per sviluppo e test
-> - `gpt-4o` — output di qualità superiore, consigliato per uso reale
-> - `gpt-4-turbo` — bilanciamento qualità/costo
+> **Model suggestions:**
+> - `gpt-4o-mini` — fast, inexpensive, great for development and testing
+> - `gpt-4o` — higher quality output, recommended for production use
+> - `gpt-4-turbo` — quality/cost balance
 
-Il `docker-compose.yml` utilizza **YAML anchors** (`x-agent-env`) per iniettare le variabili in tutti gli agenti senza duplicazioni:
+The `docker-compose.yml` uses **YAML anchors** (`x-agent-env`) to inject variables into all agents without duplication:
 
 ```yaml
 x-agent-env: &agent-env
@@ -502,66 +502,66 @@ services:
 
 ---
 
-## 8. Avvio con Docker Compose
+## 8. Starting with Docker Compose
 
 ```bash
 cd orchestrator
 
-# 1. Configurare le variabili d'ambiente
+# 1. Configure environment variables
 cp .env.example .env
-# editare .env: inserire LLM_API_KEY
+# edit .env: enter LLM_API_KEY
 
-# 2. Build e avvio di tutti i servizi
+# 2. Build and start all services
 docker-compose up -d --build
 
-# 3. Verificare che i servizi siano up
+# 3. Verify that services are up
 docker-compose ps
 
-# 4. Avviare uno sprint completo
+# 4. Start a complete sprint
 curl http://localhost:8080/sprint \
   -X POST \
   -H 'Content-Type: application/json' \
-  -d '{"project": "App di prenotazione ristoranti con pagamenti e recensioni"}'
+  -d '{"project": "Restaurant booking app with payments and reviews"}'
 
-# 5. (Opzionale) Dispatch a singolo agente
+# 5. (Optional) Dispatch to a single agent
 curl http://localhost:8080/dispatch \
   -X POST \
   -H 'Content-Type: application/json' \
   -d '{"agent": "sw-architect", "task": {"id": "t1", "action": "review architecture"}}'
 
-# 6. Leggere il contesto accumulato direttamente
+# 6. Read the accumulated context directly
 curl http://localhost:3000/context
 
-# 7. Log di un agente
+# 7. Logs for an agent
 docker-compose logs -f agent-senior-developer
 ```
 
-### Avvio standalone del solo MCP server (senza Docker)
+### Standalone startup of the MCP server only (without Docker)
 
 ```bash
 cd mcp-example
-./start-mcp.sh start    # avvia il context server su :3000
-./start-mcp.sh status   # verifica lo stato
-./start-mcp.sh logs     # segue i log
-./start-mcp.sh stop     # ferma il server
+./start-mcp.sh start    # starts the context server on :3000
+./start-mcp.sh status   # checks the status
+./start-mcp.sh logs     # follows the logs
+./start-mcp.sh stop     # stops the server
 ```
 
 ---
 
-## 9. Aggiungere un nuovo agente
+## 9. Adding a New Agent
 
-### Passo 1 — Creare la cartella dell'agente
+### Step 1 — Create the agent folder
 
 ```bash
-mkdir -p orchestrator/agents/agent-<nome>
+mkdir -p orchestrator/agents/agent-<name>
 ```
 
-### Passo 2 — `app.py`
+### Step 2 — `app.py`
 
-Copiare il template di §3.3 e personalizzare:
-- `ROLE` — nome del ruolo (es. `"Senior Security Engineer"`)
-- `SYSTEM_PROMPT` — istruzioni specifiche per il ruolo
-- `max_tokens` — aumentare per output più lunghi (es. `2500`)
+Copy the template from §3.3 and customize:
+- `ROLE` — role name (e.g., `"Senior Security Engineer"`)
+- `SYSTEM_PROMPT` — role-specific instructions
+- `max_tokens` — increase for longer output (e.g., `2500`)
 
 ```python
 ROLE = "Senior Security Engineer"
@@ -576,7 +576,7 @@ Based on the architecture and codebase design, produce a security review in mark
 Be specific and actionable."""
 ```
 
-### Passo 3 — `requirements.txt`
+### Step 3 — `requirements.txt`
 
 ```
 flask==2.2.5
@@ -584,7 +584,7 @@ requests==2.31.0
 openai>=1.0.0
 ```
 
-### Passo 4 — Aggiungere al `docker-compose.yml`
+### Step 4 — Add to `docker-compose.yml`
 
 ```yaml
   agent-senior-security-engineer:
@@ -600,9 +600,9 @@ openai>=1.0.0
       - "8109:8000"
 ```
 
-### Passo 5 (opzionale) — Inserire nella pipeline Scrum
+### Step 5 (optional) — Insert into the Scrum pipeline
 
-In `orchestrator/orchestrator/app.py`, aggiungere il nome alla lista `SCRUM_PIPELINE` nella posizione corretta:
+In `orchestrator/orchestrator/app.py`, add the name to the `SCRUM_PIPELINE` list in the correct position:
 
 ```python
 SCRUM_PIPELINE = [
@@ -611,7 +611,7 @@ SCRUM_PIPELINE = [
     'ux-designer-senior',
     'senior-database-engineer',
     'sw-architect',
-    'senior-security-engineer',   # ← aggiunto dopo l'architettura
+    'senior-security-engineer',   # ← added after architecture
     'senior-developer',
     'senior-frontend-developer',
 ]
@@ -619,44 +619,44 @@ SCRUM_PIPELINE = [
 
 ---
 
-## 10. Note su estensioni future
+## 10. Notes on Future Extensions
 
-### Persistenza del contesto
+### Context Persistence
 
-Il MCP context server usa un `let context = {}` in memoria. Per persistenza:
-- **Redis** — sostituire la variabile in-memory con `ioredis` o `redis` npm package
-- **PostgreSQL** — aggiungere una tabella `sprint_context(id, project, tasks jsonb)`
-- **File system** — scrivere su disco JSON (adatto solo per sviluppo locale)
+The MCP context server uses a `let context = {}` in memory. For persistence:
+- **Redis** — replace the in-memory variable with `ioredis` or `redis` npm package
+- **PostgreSQL** — add a `sprint_context(id, project, tasks jsonb)` table
+- **File system** — write JSON to disk (suitable only for local development)
 
-### Parallelismo parziale
+### Partial Parallelism
 
-Alcuni agenti non dipendono l'uno dall'altro e potrebbero girare in parallelo. Esempio:
-- `senior-database-engineer` e `ux-designer-senior` potrebbero partire entrambi dopo il `product-owner`
+Some agents do not depend on each other and could run in parallel. Example:
+- `senior-database-engineer` and `ux-designer-senior` could both start after `product-owner`
 
-Per implementarlo nell'orchestrator, sostituire la lista piatta con un DAG:
+To implement this in the orchestrator, replace the flat list with a DAG:
 
 ```python
 PIPELINE_STAGES = [
     ['senior-product-manager'],
     ['product-owner'],
-    ['ux-designer-senior', 'senior-database-engineer'],  # paralleli
+    ['ux-designer-senior', 'senior-database-engineer'],  # parallel
     ['sw-architect'],
-    ['senior-developer', 'senior-frontend-developer'],   # paralleli
+    ['senior-developer', 'senior-frontend-developer'],   # parallel
 ]
 ```
 
-Usare `concurrent.futures.ThreadPoolExecutor` per eseguire gli agenti di ogni stage in parallelo.
+Use `concurrent.futures.ThreadPoolExecutor` to execute the agents of each stage in parallel.
 
-### Integrazione con Temporal
+### Integration with Temporal
 
-Il `docker-compose.yml` è pensato per essere un punto di partenza locale. Per ambienti di produzione è consigliabile sostituire la pipeline sincrona con workflow **Temporal**:
-- ogni step della pipeline diventa una `Activity`
-- il workflow gestisce retry, timeout e compensazioni automaticamente
-- vedere la [documentazione Temporal](https://docs.temporal.io/)
+The `docker-compose.yml` is intended as a local starting point. For production environments it is recommended to replace the synchronous pipeline with **Temporal** workflows:
+- each pipeline step becomes an `Activity`
+- the workflow handles retries, timeouts, and compensations automatically
+- see the [Temporal documentation](https://docs.temporal.io/)
 
-### Modelli alternativi
+### Alternative Models
 
-Il parametro `LLM_MODEL` permette di usare qualsiasi modello compatibile con l'API OpenAI Chat Completions. Per usare modelli locali (es. via **Ollama** o **LM Studio**) è sufficiente sovrascrivere il `base_url` nel client:
+The `LLM_MODEL` parameter allows using any model compatible with the OpenAI Chat Completions API. To use local models (e.g., via **Ollama** or **LM Studio**) it is sufficient to override the `base_url` in the client:
 
 ```python
 client = OpenAI(
@@ -665,14 +665,14 @@ client = OpenAI(
 )
 ```
 
-Aggiungere `LLM_BASE_URL` come variabile d'ambiente nel `.env` e nel `docker-compose.yml`.
+Add `LLM_BASE_URL` as an environment variable in `.env` and in `docker-compose.yml`.
 
-### Output persistente dello sprint
+### Persistent Sprint Output
 
-L'endpoint `/sprint` restituisce tutto in risposta HTTP ma non salva su file. Per generare automaticamente un documento markdown dello sprint:
+The `/sprint` endpoint returns everything in the HTTP response but does not save to file. To automatically generate a markdown document of the sprint:
 
 ```python
-# in orchestrator/app.py, alla fine di /sprint
+# in orchestrator/app.py, at the end of /sprint
 import json, pathlib, datetime
 out_dir = pathlib.Path("/srv/sprints")
 out_dir.mkdir(exist_ok=True)
@@ -680,4 +680,4 @@ ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
 (out_dir / f"sprint_{ts}.json").write_text(json.dumps(sprint_results, indent=2))
 ```
 
-Montare `/srv/sprints` come volume nel `docker-compose.yml` per accedervi dall'host.
+Mount `/srv/sprints` as a volume in `docker-compose.yml` to access it from the host.
