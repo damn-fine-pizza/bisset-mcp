@@ -295,3 +295,81 @@ def test_run_tests_reports_drift(engine, tmp_path):
     # second run: realigned, no drift
     result, drifted = engine.run_tests(step_id, sid)
     assert drifted is False
+
+
+import os as _os
+
+BEHAVE = _os.path.join(_os.path.dirname(__file__), "..", "..", "..", ".venv", "bin", "behave")
+BEHAVE = _os.path.abspath(BEHAVE)
+
+STEPS_PY = '''
+from behave import given, when, then
+
+@given("the numbers {a:d} and {b:d}")
+def step_given(ctx, a, b):
+    ctx.a, ctx.b = a, b
+
+@when("I add them")
+def step_when(ctx):
+    ctx.result = ctx.a + ctx.b
+
+@then("the result is {expected:d}")
+def step_then(ctx, expected):
+    assert ctx.result == expected
+'''
+
+
+def _behave_project(engine, tmp_path):
+    pid = engine.create_project("myapp", str(tmp_path),
+                                test_runner=BEHAVE,
+                                test_args="--format json --no-snippets",
+                                adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Calc", "d", 1)
+    steps_dir = tmp_path / "features" / "steps"
+    steps_dir.mkdir(parents=True)
+    (steps_dir / "calc_steps.py").write_text(STEPS_PY)
+    return sid, step_id
+
+
+@pytest.mark.skipif(not _os.path.exists(BEHAVE), reason="behave not installed in .venv")
+def test_validate_feature_all_defined(engine, tmp_path):
+    sid, step_id = _behave_project(engine, tmp_path)
+    engine.set_feature(step_id, sid, VALID_FEATURE)
+    v = engine.validate_feature(step_id, sid)
+    assert v["syntax_ok"] is True
+    assert v["steps_defined"] is True
+    assert v["undefined_steps"] == []
+    assert v["errors"] == []
+
+
+@pytest.mark.skipif(not _os.path.exists(BEHAVE), reason="behave not installed in .venv")
+def test_validate_feature_undefined_step(engine, tmp_path):
+    sid, step_id = _behave_project(engine, tmp_path)
+    feature = VALID_FEATURE + "\n  Scenario: Ghost\n    Given a step nobody wrote\n"
+    engine.set_feature(step_id, sid, feature)
+    v = engine.validate_feature(step_id, sid)
+    assert v["syntax_ok"] is True
+    assert v["steps_defined"] is False
+    assert any("a step nobody wrote" in s for s in v["undefined_steps"])
+
+
+@pytest.mark.skipif(not _os.path.exists(BEHAVE), reason="behave not installed in .venv")
+def test_validate_feature_broken_gherkin(engine, tmp_path):
+    sid, step_id = _behave_project(engine, tmp_path)
+    # bypass set_feature's structural check: write broken file directly
+    engine.set_feature(step_id, sid, VALID_FEATURE)
+    (tmp_path / "features" / "calc.feature").write_text(
+        "Feature: X\n  Scenario: bad\n    Given ok\n  Garbage line outside any step\n")
+    v = engine.validate_feature(step_id, sid)
+    # behave refuses to parse -> syntax_ok False, errors carry the parser output
+    assert v["syntax_ok"] is False
+    assert v["errors"]
+
+
+def test_validate_feature_requires_behave_adapter(engine, tmp_path):
+    pid = engine.create_project("p", str(tmp_path), adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1, feature_path="x.feature")
+    with pytest.raises(ValueError):
+        engine.validate_feature(step_id, sid)

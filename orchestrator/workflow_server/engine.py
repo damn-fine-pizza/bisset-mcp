@@ -2,12 +2,13 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 from typing import Optional
 
 from .storage import Storage
 from .rules import RuleEngine, Action
-from .adapters import get_adapter, AdapterResult
+from .adapters import get_adapter, AdapterResult, strip_ansi
 from .gherkin import derive_filename, sanitize_filename, check_syntax
 
 # Sane defaults applied when neither the step nor the session define rules.
@@ -184,6 +185,67 @@ class WorkflowEngine:
         content, drifted = self._detect_drift(step, session_id, abs_path)
         return {"content": content, "feature_path": rel_path,
                 "feature_drifted": drifted, "file_missing": False}
+
+    # -- Gherkin Validation -----------------------------------------------------
+
+    _UNDEFINED_COUNT_RE = re.compile(r"(\d+)\s+undefined")
+    _SNIPPET_STEP_RE = re.compile(r"@(?:given|when|then|step)\(u?['\"](.+?)['\"]\)")
+
+    def validate_feature(self, step_id: str, session_id: str) -> dict:
+        """Dry-run validation: syntax + step definitions, without executing.
+
+        Verified against behave 1.3.3: snippets corrupt --format json output,
+        so the JSON pass runs with --no-snippets and exact undefined step
+        names come from a second plain dry-run's snippet block.
+        """
+        step = self.db.get_step(step_id)
+        if not step:
+            raise ValueError(f"Step not found: {step_id}")
+        if not step.get("feature_path"):
+            raise ValueError(f"Step has no feature_path: {step_id}")
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        project = self.db.get_project(session["project_id"])
+        if not project:
+            raise ValueError(f"Project not found: {session['project_id']}")
+        if project.get("adapter") != "behave":
+            raise ValueError("step_validate_feature requires the behave adapter")
+
+        runner = project["test_runner"]
+        cmd = [runner, "--dry-run", "--no-snippets", "--format", "json",
+               step["feature_path"]]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  timeout=60, cwd=project["path"])
+        except FileNotFoundError:
+            raise ValueError(f"behave runner not found: {runner}")
+
+        output = strip_ansi(proc.stdout + proc.stderr)
+
+        try:
+            start = proc.stdout.index('[')
+            end = proc.stdout.rindex(']')
+            json.loads(proc.stdout[start:end + 1])
+        except (ValueError, json.JSONDecodeError):
+            return {"syntax_ok": False, "steps_defined": False,
+                    "undefined_steps": [], "errors": [output]}
+
+        m = self._UNDEFINED_COUNT_RE.search(output)
+        undefined_count = int(m.group(1)) if m else 0
+        undefined_steps: list[str] = []
+        if undefined_count:
+            proc2 = subprocess.run([runner, "--dry-run", step["feature_path"]],
+                                   capture_output=True, text=True,
+                                   timeout=60, cwd=project["path"])
+            snippet_out = strip_ansi(proc2.stdout + proc2.stderr)
+            undefined_steps = list(dict.fromkeys(
+                self._SNIPPET_STEP_RE.findall(snippet_out)))
+
+        return {"syntax_ok": True,
+                "steps_defined": undefined_count == 0,
+                "undefined_steps": undefined_steps,
+                "errors": []}
 
     # -- Test Execution ---------------------------------------------------------
 
