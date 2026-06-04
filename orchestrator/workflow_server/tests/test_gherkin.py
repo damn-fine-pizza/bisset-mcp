@@ -50,3 +50,14 @@ def test_check_syntax_scenario_without_steps():
     content = "Feature: X\n  Scenario: empty\n  Scenario: ok\n    Given z\n"
     errors = check_syntax(content)
     assert any("empty" in e for e in errors)
+
+
+@pytest.mark.parametrize("header", ["Scenario:", "Scenario Outline:"])
+def test_check_syntax_accepts_scenario_variants(header):
+    content = f"Feature: X\n  {header} Y\n    Given z\n"
+    assert check_syntax(content) == []
+
+
+def test_check_syntax_ignores_comments():
+    content = "# preamble\nFeature: X\n  Scenario: S\n    # comment\n    Given z\n"
+    assert check_syntax(content) == []
