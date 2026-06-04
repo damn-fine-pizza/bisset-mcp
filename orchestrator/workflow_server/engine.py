@@ -195,14 +195,23 @@ class WorkflowEngine:
         self.db.update_step(step_id, current_coverage=coverage)
         return run_id
 
-    def run_tests(self, step_id: str, session_id: str) -> AdapterResult:
-        """Execute tests for a step via subprocess."""
+    def run_tests(self, step_id: str, session_id: str) -> tuple[AdapterResult, bool]:
+        """Execute tests for a step via subprocess.
+
+        Returns (result, feature_drifted). Disk is truth: a drifted feature
+        still runs, but the drift is recorded and reported.
+        """
         step = self.db.get_step(step_id)
         if not step or not step.get("feature_path"):
-            return AdapterResult(passed=0, failed=0)
+            return AdapterResult(passed=0, failed=0), False
 
         session = self.db.get_session(session_id)
         project = self.db.get_project(session["project_id"])
+
+        drifted = False
+        _, abs_path = self._feature_paths(step, project)
+        if os.path.isfile(abs_path) and step.get("feature_hash"):
+            _, drifted = self._detect_drift(step, session_id, abs_path)
 
         adapter = get_adapter(project.get("adapter", "generic"))
         cmd = [project["test_runner"]]
@@ -219,7 +228,7 @@ class WorkflowEngine:
 
         self.record_test_run(step_id, session_id, result.passed, result.failed,
                              result.coverage, result.raw_output)
-        return result
+        return result, drifted
 
     # -- Step Completion --------------------------------------------------------
 

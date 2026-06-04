@@ -273,3 +273,25 @@ def test_get_feature_file_missing_returns_db_copy(engine, tmp_path):
     result = engine.get_feature(step_id, sid)
     assert result["file_missing"] is True
     assert result["content"] == VALID_FEATURE  # last DB copy as reference
+
+
+def test_run_tests_reports_drift(engine, tmp_path):
+    """run_tests flags drift when the file changed after set_feature.
+
+    Uses the 'generic' runner with /bin/true so no real test framework runs.
+    """
+    pid = engine.create_project("myapp", str(tmp_path),
+                                test_runner="true", adapter="generic")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Calc", "d", 1)
+    engine.set_feature(step_id, sid, VALID_FEATURE)
+
+    (tmp_path / "features" / "calc.feature").write_text(VALID_FEATURE + "# edited\n")
+
+    result, drifted = engine.run_tests(step_id, sid)
+    assert drifted is True
+    assert result.passed == 1  # /bin/true exit 0 -> generic adapter pass
+
+    # second run: realigned, no drift
+    result, drifted = engine.run_tests(step_id, sid)
+    assert drifted is False

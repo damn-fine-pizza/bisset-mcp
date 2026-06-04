@@ -264,13 +264,14 @@ async def step_run_tests(request: Request) -> Dict[str, Any]:
         body = await request.json()
         step_id = body["step_id"]
         session_id = body["session_id"]
-        result = request.app.state.engine.run_tests(step_id, session_id)
+        result, drifted = request.app.state.engine.run_tests(step_id, session_id)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success({
             "passed": result.passed,
             "failed": result.failed,
             "coverage": result.coverage,
             "errors": result.errors,
+            "feature_drifted": drifted,
         }, duration)
     except Exception as e:
         return ResponseWrapper.error(str(e), "STEP_RUN_TESTS_ERROR", 500)
