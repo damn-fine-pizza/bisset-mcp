@@ -7,6 +7,17 @@ from .storage import Storage
 from .rules import RuleEngine, Action
 from .adapters import get_adapter, AdapterResult
 
+# Sane defaults applied when neither the step nor the session define rules.
+# Coverage is intentionally absent: only the behave adapter reports a real
+# scenario coverage; the pytest/generic adapters always report 0.0.
+DEFAULT_RULES = [
+    {"when": "no_tests", "then": "ask_user"},
+    {"when": "tests_pass AND gate == 'tests_only'", "then": "advance"},
+    {"when": "tests_pass", "then": "ask_user"},  # human_approval / tests+human
+    {"when": "tests_fail AND retries < 3", "then": "retry"},
+    {"when": "always", "then": "ask_user"},
+]
+
 
 class WorkflowEngine:
     """Core workflow engine integrating storage, rules, and test adapters."""
@@ -145,10 +156,10 @@ class WorkflowEngine:
             "no_tests": not has_tests,
         }
 
-        # Get rules: step override or session default
+        # Get rules: step override, session default, or engine defaults
         rules = step.get("rules_override") or session.get("default_rules")
         if not rules:
-            rules = [{"when": "always", "then": "abort"}]
+            rules = DEFAULT_RULES
 
         engine = RuleEngine(rules)
         action = engine.evaluate(**context)

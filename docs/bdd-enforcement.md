@@ -1,203 +1,101 @@
-# BDD Enforcement in Bisset
+# BDD Enforcement in Bisset (v2)
 
 ## Goal
 
-Bisset enforces a **BDD-first development loop**: every task with acceptance
-criteria must be backed by a Gherkin feature file that actually runs and passes
-before the task can be marked done.
+Bisset enforces a **BDD-first development loop**: a pipeline step backed by a
+Gherkin feature file cannot be accepted until Bisset itself has run the
+scenarios and the session rules allow advancing.
 
 The enforcement is **internal to Bisset** — not delegated to CI/CD or to the
-LLM's self-reporting. Bisset itself executes the test runner and stores the
-results. The LLM cannot falsify outcomes.
+LLM's self-reporting. Bisset executes the test runner as a subprocess and
+stores the results. The LLM has no input path into the test results; it can
+only influence outcomes by writing correct code.
+
+Try it live: `./scripts/demo_bdd_gate.sh` (see the README "Demo" section).
 
 ---
 
-## Design Principles
-
-1. **Bisset is the test executor**, not a passive recipient of claimed results.
-2. **Coverage threshold** (default 80%) is enforced at `accept_task_result` time.
-3. **No CI dependency** for the development loop. CI is optional and additive.
-4. **Feature files are project artifacts** — written into the project repo, committed alongside code.
-5. **Gate is per-task** — only tasks with `acceptance_criteria` are gated. Tasks without are free.
-
----
-
-## Configuration
-
-Provided in `project_meta` during `workflow_start`:
-
-```json
-{
-  "name": "MyProject",
-  "project_path": "/absolute/path/to/project",
-  "features_dir": "features",
-  "test_runner": "pytest",
-  "test_runner_args": ["--tb=short", "-q"],
-  "bdd_coverage_threshold": 80
-}
-```
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `project_path` | `null` | Absolute path to the project root. Required for BDD enforcement. |
-| `features_dir` | `"features"` | Relative path inside `project_path` where `.feature` files live. |
-| `test_runner` | `"pytest"` | Executable to invoke (pytest, behave, cucumber, etc.). |
-| `test_runner_args` | `["--tb=short", "-q"]` | Extra args passed to the runner. |
-| `bdd_coverage_threshold` | `80` | Minimum % of scenarios that must pass to accept a task. |
-
-If `project_path` is not set, the BDD gate is disabled (tasks accept without test evidence).
-
----
-
-## Workflow Loop
+## How the gate works
 
 ```
-workflow_add_task(task_id, title, acceptance_criteria="""
-  Given the player is playing a stream
-  When one second elapses
-  Then the DebugOverlay shows fps > 0
-  And buffer_ms is greater than 0
-""")
-    ↓
-Bisset writes: {project_path}/features/{task_id}.feature
-    ↓
-[Copilot implements: step definitions + production code]
-    ↓
-workflow_run_tests(task_id)
-    ↓  Bisset executes:
-    │  pytest {project_path}/features/{task_id}.feature --tb=short -q
-    │  Parses stdout → counts passed / total
-    │  Stores in DB: scenarios_passed=3, scenarios_total=4, coverage_pct=75
-    │  Returns: { passed: 3, total: 4, coverage_pct: 75, threshold: 80, ok: false }
-    ↓
-[Copilot fixes failing scenario]
-    ↓
-workflow_run_tests(task_id)
-    → { passed: 4, total: 4, coverage_pct: 100, ok: true }
-    ↓
-workflow_accept_task_result(task_id, summary, artifacts, tests_run, test_results)
-    ↓  Bisset checks DB:
-    │  - task has acceptance_criteria?  → YES
-    │  - workflow_run_tests was called? → YES
-    │  - coverage_pct >= threshold?     → 100 >= 80 → PASS
-    ↓
-Task marked done. ✅
+step_run_tests(step_id, session_id)
+    ↓  Bisset executes: {test_runner} {test_args} {feature_path}   (cwd = project path)
+    ↓  The adapter parses the output → passed, failed, coverage, errors
+    ↓  Result stored in the test_runs table
+step_complete(step_id, session_id)
+    ↓  Bisset builds the rule context from ITS OWN stored results
+    ↓  Rule engine evaluates when/then rules → action
+    →  advance | retry | ask_user | abort | skip
 ```
 
----
+`step_complete` never trusts the caller: it reads the latest `test_runs` row
+recorded by `step_run_tests`. If no run exists, `no_tests` is true.
 
-## New Tools
+## Default rules
 
-### `workflow_run_tests(task_id)`
+When neither the step (`rules_override`) nor the session (`default_rules`)
+define rules, the engine applies these defaults:
 
-Executes the BDD runner for the given task's feature file.
-
-**Input**: `task_id`
-
-**What Bisset does**:
-1. Looks up `project_path`, `features_dir`, `test_runner`, `test_runner_args` from session config.
-2. Runs: `{test_runner} {project_path}/{features_dir}/{task_id}.feature {test_runner_args}`
-3. Parses stdout for scenario counts:
-   - pytest pattern: `N passed`, `N failed`, `N error`
-   - behave pattern: `N scenarios passed`, `N failed`
-4. Computes `coverage_pct = passed / total * 100`
-5. Stores results in DB table `task_test_runs`.
-6. Returns full result dict.
-
-**Output**:
-```json
-{
-  "task_id": "stats-pipeline",
-  "passed": 4,
-  "failed": 0,
-  "total": 4,
-  "coverage_pct": 100.0,
-  "threshold": 80,
-  "ok": true,
-  "runner_output": "4 passed in 0.41s"
-}
+```yaml
+- when: no_tests                          # never accept without test evidence
+  then: ask_user
+- when: tests_pass AND gate == 'tests_only'
+  then: advance
+- when: tests_pass                        # human_approval / tests+human gates
+  then: ask_user
+- when: tests_fail AND retries < 3
+  then: retry
+- when: always
+  then: ask_user
 ```
 
----
+Red tests can never produce `advance` under the default rules. Sessions can
+override this with `pipeline_set_rules` / `session_start(default_rules=...)`.
 
-### `workflow_add_task` (updated)
+## Scenario coverage
 
-When `acceptance_criteria` is provided and `project_path` is configured:
-- Writes `{project_path}/{features_dir}/{task_id}.feature` with the Gherkin content.
-- Feature file uses the task title as the `Feature:` name.
-- Scenarios are taken verbatim from `acceptance_criteria`.
+The **behave adapter** computes real scenario coverage from behave's JSON
+output: `coverage = passed_scenarios / total_scenarios * 100`.
 
-Generated file format:
-```gherkin
-# Auto-generated by Bisset — task: stats-pipeline
-# Edit to refine scenarios; do not remove this file.
-Feature: Wire ExoPlayer stats to Core Engine
+The **pytest** and **generic** adapters do not compute coverage — they always
+report `0.0`. For this reason, **coverage is intentionally absent from the
+default rules**. If your project uses the behave adapter, you can opt in with
+session rules, e.g.:
 
-  Scenario: Stats are pushed after one second
-    Given the player is playing a stream
-    When one second elapses
-    Then the DebugOverlay shows fps > 0
-    And buffer_ms is greater than 0
+```yaml
+- when: tests_pass AND coverage >= 80
+  then: advance
 ```
 
----
+There is no global coverage-threshold environment variable; thresholds live in
+the rules of each session or step.
 
-### `accept_task_result` (updated gate)
+## Adapters
 
-If task has `acceptance_criteria`:
-1. Checks `task_test_runs` for a passing run (`ok=true`) for this task.
-2. If none → returns error: *"Run `workflow_run_tests({task_id})` first and achieve ≥{threshold}% coverage."*
-3. If exists but `coverage_pct < threshold` → returns error with current coverage and threshold.
-4. Otherwise → proceeds normally.
+| Adapter   | Runner invocation                  | Counts                    | Coverage |
+|-----------|------------------------------------|---------------------------|----------|
+| `behave`  | `behave --format json <feature>`   | scenarios passed/failed   | scenario % |
+| `pytest`  | `pytest <path>`                    | tests passed/failed       | always 0 |
+| `generic` | any command, exit code only        | 1 pass or 1 fail          | always 0 |
 
----
+All adapter output is stripped of ANSI escape codes before being stored or
+returned, so the model receives clean, structured feedback.
 
-## Storage
-
-New table `task_test_runs`:
-
-```sql
-CREATE TABLE task_test_runs (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id   TEXT,
-    session_id TEXT,
-    run_at    REAL,
-    passed    INTEGER,
-    failed    INTEGER,
-    total     INTEGER,
-    coverage_pct REAL,
-    threshold INTEGER,
-    ok        INTEGER,   -- 1 = passed threshold, 0 = failed
-    runner_output TEXT
-)
-```
-
-The gate in `accept_task_result` queries:
-```sql
-SELECT ok, coverage_pct FROM task_test_runs
-WHERE task_id=? AND session_id=? AND ok=1
-ORDER BY run_at DESC LIMIT 1
-```
-
----
-
-## Enforcement Summary
+## Enforcement summary
 
 | Actor | Role | Can lie? |
 |-------|------|----------|
-| Copilot | Writes feature files, step defs, production code | Yes — but feature files are on disk |
-| Bisset | Executes runner, parses output, stores results | No — executes independently |
-| `accept_task_result` | Reads DB results, not LLM claims | No — checks its own DB |
-| CI (optional) | Re-runs all features on push, blocks merge | No — independent execution |
-
-The LLM has no input path into the test results. It can only influence outcomes by writing correct code.
-
----
+| LLM (Claude/Copilot) | Writes feature files, step defs, production code | Yes — but feature files are on disk |
+| Bisset `step_run_tests` | Executes runner, parses output, stores results | No — executes independently |
+| Bisset `step_complete` | Evaluates rules against its own DB results | No — checks its own DB |
+| CI (optional) | Re-runs all features on push | No — independent execution |
 
 ## Limitations
 
-- `project_path` must be accessible from the machine running `workflow_server`.
-- The test runner must be installed in the same environment.
-- If `project_path` is not configured, the gate is disabled (graceful degradation).
-- Coverage is measured at **scenario level** (passed/total), not at code line level.
-  Code-level coverage (e.g., `pytest --cov`) can be added as a future metric.
+- The project path must be accessible from the machine running `workflow_server`.
+- The test runner must be installed and reachable (use an absolute path for
+  virtualenv runners, e.g. `/path/to/.venv/bin/behave`).
+- Coverage is measured at **scenario level** (passed/total), not at code line
+  level, and only by the behave adapter.
+- A step without `feature_path` produces `no_tests` → `ask_user` under the
+  default rules (graceful degradation, never silent acceptance).

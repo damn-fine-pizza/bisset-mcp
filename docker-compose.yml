@@ -23,8 +23,6 @@ services:
     environment:
       DATABASE_PATH: /data/workflow.db
       WORKFLOW_SERVER_PORT: "${WORKFLOW_SERVER_PORT:-8765}"
-      WORKFLOW_PRETTY_JSON_LOGS: "${WORKFLOW_PRETTY_JSON_LOGS:-1}"
-      BDD_COVERAGE_THRESHOLD: "${BDD_COVERAGE_THRESHOLD:-80}"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c",
@@ -51,7 +49,7 @@ services:
       - path: .env
         required: false
     environment:
-      MCP_SERVER_HOST: "http://workflow_server:${WORKFLOW_SERVER_PORT:-8765}"
+      WORKFLOW_BACKEND_URL: "http://workflow_server:${WORKFLOW_SERVER_PORT:-8765}"
     stdin_open: true
     tty: false
     restart: unless-stopped

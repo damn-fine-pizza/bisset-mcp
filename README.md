@@ -4,6 +4,10 @@
 
 Bisset itself does **not** call any LLM API. It is a pure orchestration layer: it manages state, enforces gates, and exposes tools. The AI client (Claude, Copilot, etc.) does the thinking.
 
+## Status
+
+Bisset is an experimental prototype. It is a local-first MCP workflow controller for AI-assisted software development. It is not production-ready.
+
 ## Architecture
 
 ```
@@ -26,8 +30,7 @@ git clone <repo-url> && cd BissetMCP
 # 2. Create virtualenv + install deps
 python3 -m venv .venv
 source .venv/bin/activate
-pip install fastapi uvicorn httpx pydantic
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt
 
 # 3. Copy config
 cp .env.example .env
@@ -51,8 +54,7 @@ Bisset works with any MCP-compatible client. Below are the two primary targets.
 ```bash
 claude mcp add bisset \
   -e WORKFLOW_BACKEND_URL=http://127.0.0.1:8765 \
-  -e PYTHONPATH=/absolute/path/to/BissetMCP \
-  -- /absolute/path/to/BissetMCP/.venv/bin/python3 -m orchestrator.mcp_server
+  -- /absolute/path/to/BissetMCP/run-mcp.sh
 ```
 
 Or use the helper:
@@ -128,10 +130,33 @@ BissetMCP/
     server.sh            # Start/stop workflow server
     db.sh                # Database manager
   docs/                  # Design docs
-  requirements.txt
+  run-mcp.sh             # MCP STDIO server launcher (.venv-based)
+  requirements.txt       # Runtime dependencies
+  requirements-dev.txt   # Test + demo dependencies
   Dockerfile
   docker-compose.yml
 ```
+
+## Demo: the BDD gate in action
+
+A deterministic, self-contained demo of the core thesis — *Bisset is not a
+test runner, it is a gatekeeper*. It spins up an isolated server, runs red
+Gherkin scenarios, proves that acceptance is **blocked** while tests are red,
+applies the fix, and shows acceptance succeeding:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+./scripts/demo_bdd_gate.sh
+```
+
+Expected output: red tests → acceptance blocked → fix applied → green tests →
+acceptance granted → session completed. The script exits non-zero if any of
+those expectations fails (in particular, if the gate fails to block).
+
+To run the same loop driven by an AI client instead of a script, see
+[`examples/demo/claude-code-demo.md`](examples/demo/claude-code-demo.md).
 
 ## Running tests
 
@@ -145,11 +170,13 @@ All variables are read from `.env` (copy `.env.example`):
 
 | Variable                  | Default                                      | Description                          |
 |---------------------------|----------------------------------------------|--------------------------------------|
-| `DATABASE_PATH`           | `./orchestrator/workflow_server/workflow.db`  | SQLite database file path            |
+| `DATABASE_PATH`           | `~/.bisset/bisset.db`                        | SQLite database file path            |
 | `WORKFLOW_SERVER_PORT`    | `8765`                                       | HTTP port for the workflow server    |
-| `WORKFLOW_PRETTY_JSON_LOGS`| `1`                                         | `1` = pretty-print JSON logs         |
-| `BDD_COVERAGE_THRESHOLD`  | `80`                                         | Minimum Gherkin coverage %           |
-| `MCP_SERVER_HOST`         | `http://localhost:8765`                      | URL the MCP proxy uses to reach backend |
+| `WORKFLOW_BACKEND_URL`    | `http://127.0.0.1:8765`                      | URL the MCP proxy uses to reach backend |
+
+Note on coverage: only the **behave** adapter reports a real (scenario-level)
+coverage; pytest/generic adapters always report `0.0`. Coverage gating is
+opt-in via session rules — see `docs/bdd-enforcement.md`.
 
 ## License
 

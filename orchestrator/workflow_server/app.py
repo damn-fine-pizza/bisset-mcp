@@ -6,6 +6,7 @@ All responses wrapped in Claude SDK TextContent format with metadata.
 Zero logic in endpoints -- everything forwarded to WorkflowEngine.
 """
 
+import os
 import time
 import json
 from typing import Any, Dict
@@ -76,7 +77,8 @@ def _override_db_path(path: str | None) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle management."""
-    db_path = _db_path_override  # None means Storage uses default ~/.bisset/bisset.db
+    # Priority: test override > DATABASE_PATH env > Storage default (~/.bisset/bisset.db)
+    db_path = _db_path_override or os.environ.get("DATABASE_PATH") or None
     app.state.db = Storage(db_path=db_path)
     app.state.engine = WorkflowEngine(app.state.db)
     yield
