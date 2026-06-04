@@ -11,3 +11,16 @@ jobs:
           python-version: '3.14'
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: PYTHONPATH=. pytest orchestrator/ -q
+
+  demo:
+    # End-to-end proof of the BDD gate: red tests must block acceptance,
+    # the fix must unblock it. The script exits non-zero on any violation.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: python -m venv .venv
+      - run: .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+      - run: ./scripts/demo_bdd_gate.sh
