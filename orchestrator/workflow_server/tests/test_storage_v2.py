@@ -114,6 +114,20 @@ def test_step_feature_content_and_hash_roundtrip():
     db.close()
 
 
+def test_reopen_v2_database_is_noop(tmp_path):
+    """Reopening an up-to-date DB must not re-run migrations."""
+    db_file = str(tmp_path / "v2.db")
+    db = Storage(db_path=db_file)
+    cols_before = [r[1] for r in db.conn.execute("PRAGMA table_info(steps)").fetchall()]
+    db.close()
+    db2 = Storage(db_path=db_file)
+    cols_after = [r[1] for r in db2.conn.execute("PRAGMA table_info(steps)").fetchall()]
+    ver = db2.conn.execute("SELECT version FROM schema_version").fetchone()[0]
+    db2.close()
+    assert cols_after == cols_before
+    assert ver == 2
+
+
 def test_migration_v1_to_v2_adds_feature_columns(tmp_path):
     """A v1 database opened by the new Storage gains the new columns."""
     import sqlite3

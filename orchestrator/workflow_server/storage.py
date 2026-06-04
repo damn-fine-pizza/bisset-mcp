@@ -89,9 +89,17 @@ class Storage:
                 return
 
         if current == 1:
-            # v1 -> v2: additive columns on steps
-            cur.execute("ALTER TABLE steps ADD COLUMN feature_content TEXT")
-            cur.execute("ALTER TABLE steps ADD COLUMN feature_hash TEXT")
+            # v1 -> v2: additive columns on steps (guarded: ALTER has no IF NOT EXISTS)
+            existing = {r[1] for r in cur.execute("PRAGMA table_info(steps)").fetchall()}
+            if "feature_content" not in existing:
+                cur.execute("ALTER TABLE steps ADD COLUMN feature_content TEXT")
+            if "feature_hash" not in existing:
+                cur.execute("ALTER TABLE steps ADD COLUMN feature_hash TEXT")
+            cur.execute("DELETE FROM schema_version")
+            cur.execute(
+                "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
+            )
+            self.conn.commit()
         else:
             cur.executescript("""
             CREATE TABLE IF NOT EXISTS schema_version (
@@ -125,6 +133,7 @@ class Storage:
                 description TEXT NOT NULL DEFAULT '',
                 "order" INTEGER NOT NULL,
                 feature_path TEXT,
+                -- feature_content/feature_hash also added by the v1->v2 ALTER path above; keep in sync
                 feature_content TEXT,
                 feature_hash TEXT,
                 gate TEXT NOT NULL DEFAULT 'tests_only',
@@ -156,13 +165,11 @@ class Storage:
                 data TEXT,
                 timestamp REAL NOT NULL
             );
-            """)
 
-        cur.execute("DELETE FROM schema_version")
-        cur.execute(
-            "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
-        )
-        self.conn.commit()
+            DELETE FROM schema_version;
+            INSERT INTO schema_version (version) VALUES (2);
+            """)
+            self.conn.commit()
 
     # ── Project ───────────────────────────────────────────────────────────────
 
