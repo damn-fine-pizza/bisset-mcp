@@ -119,9 +119,13 @@ class WorkflowEngine:
             return {"written": False, "errors": errors}
 
         session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
         project = self.db.get_project(session["project_id"])
+        if not project:
+            raise ValueError(f"Project not found: {session['project_id']}")
         name = sanitize_filename(filename) if filename else derive_filename(step["title"])
-        features_dir = project.get("features_dir", "features/").strip("/")
+        features_dir = project.get("features_dir", "features/").strip("/") or "features"
         rel_path = f"{features_dir}/{name}"
         abs_path = os.path.join(project["path"], rel_path)
 

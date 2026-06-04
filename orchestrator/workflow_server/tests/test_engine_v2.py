@@ -200,3 +200,32 @@ def test_set_feature_rejects_traversal_filename(engine, tmp_path):
     step_id = engine.add_step(sid, "S", "d", 1)
     with pytest.raises(ValueError):
         engine.set_feature(step_id, sid, VALID_FEATURE, filename="../evil")
+
+
+def test_set_feature_unknown_session_raises(engine, tmp_path):
+    pid = engine.create_project("myapp", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    with pytest.raises(ValueError, match="Session not found"):
+        engine.set_feature(step_id, "nonexistent", VALID_FEATURE)
+
+
+def test_set_feature_explicit_filename(engine, tmp_path):
+    pid = engine.create_project("myapp", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    result = engine.set_feature(step_id, sid, VALID_FEATURE, filename="my_calc")
+    assert result["feature_path"] == "features/my_calc.feature"
+    assert (tmp_path / "features" / "my_calc.feature").exists()
+
+
+def test_set_feature_overwrites_and_updates_hash(engine, tmp_path):
+    pid = engine.create_project("myapp", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Calc", "d", 1)
+    first = engine.set_feature(step_id, sid, VALID_FEATURE)
+    updated = VALID_FEATURE + "\n  Scenario: More\n    Given more\n"
+    second = engine.set_feature(step_id, sid, updated)
+    assert second["hash"] != first["hash"]
+    assert (tmp_path / "features" / "calc.feature").read_text() == updated
+    assert engine.db.get_step(step_id)["feature_content"] == updated
