@@ -1,11 +1,14 @@
 """Bisset v2 Workflow Engine — orchestration with rule evaluation and gate logic."""
+import hashlib
 import json
+import os
 import subprocess
 from typing import Optional
 
 from .storage import Storage
 from .rules import RuleEngine, Action
 from .adapters import get_adapter, AdapterResult
+from .gherkin import derive_filename, sanitize_filename, check_syntax
 
 # Sane defaults applied when neither the step nor the session define rules.
 # Coverage is intentionally absent: only the behave adapter reports a real
@@ -97,6 +100,42 @@ class WorkflowEngine:
     def current_step(self, session_id: str) -> dict | None:
         """Get the current active or next pending step."""
         return self.db.get_current_step(session_id)
+
+    # -- Gherkin ------------------------------------------------------------------
+
+    def _feature_paths(self, step: dict, project: dict) -> tuple[str, str]:
+        """Return (rel_path, abs_path) for a step's feature file."""
+        rel = step["feature_path"]
+        return rel, os.path.join(project["path"], rel)
+
+    def set_feature(self, step_id: str, session_id: str, content: str,
+                    filename: str | None = None) -> dict:
+        """Validate, write to disk (disk = truth) and register content + hash."""
+        step = self.db.get_step(step_id)
+        if not step:
+            raise ValueError(f"Step not found: {step_id}")
+        errors = check_syntax(content)
+        if errors:
+            return {"written": False, "errors": errors}
+
+        session = self.db.get_session(session_id)
+        project = self.db.get_project(session["project_id"])
+        name = sanitize_filename(filename) if filename else derive_filename(step["title"])
+        features_dir = project.get("features_dir", "features/").strip("/")
+        rel_path = f"{features_dir}/{name}"
+        abs_path = os.path.join(project["path"], rel_path)
+
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        with open(abs_path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        self.db.update_step(step_id, feature_path=rel_path,
+                            feature_content=content, feature_hash=digest)
+        self.db.add_event(session_id, "feature_set", step_id=step_id,
+                          data={"feature_path": rel_path, "hash": digest})
+        return {"written": True, "feature_path": rel_path,
+                "hash": digest, "errors": []}
 
     # -- Test Execution ---------------------------------------------------------
 

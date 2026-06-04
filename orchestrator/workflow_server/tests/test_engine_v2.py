@@ -151,3 +151,52 @@ def test_project_lock_isolation(engine):
     s2 = engine.db.get_session(sid2)
     assert s1["project_id"] == pid1
     assert s2["project_id"] == pid2
+
+
+VALID_FEATURE = """Feature: Calculator
+  Scenario: Add
+    Given the numbers 1 and 2
+    When I add them
+    Then the result is 3
+"""
+
+
+def test_set_feature_writes_file_and_registers(engine, tmp_path):
+    pid = engine.create_project("myapp", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Implement calculator", "d", 1)
+
+    result = engine.set_feature(step_id, sid, VALID_FEATURE)
+    assert result["written"] is True
+    assert result["feature_path"] == "features/implement-calculator.feature"
+
+    written = (tmp_path / "features" / "implement-calculator.feature").read_text()
+    assert written == VALID_FEATURE
+
+    step = engine.db.get_step(step_id)
+    assert step["feature_path"] == "features/implement-calculator.feature"
+    assert step["feature_content"] == VALID_FEATURE
+    assert len(step["feature_hash"]) == 64  # sha256 hex
+
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "feature_set" for e in events)
+
+
+def test_set_feature_rejects_bad_syntax_without_writing(engine, tmp_path):
+    pid = engine.create_project("myapp", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Bad", "d", 1)
+
+    result = engine.set_feature(step_id, sid, "this is not gherkin at all")
+    assert result["written"] is False
+    assert result["errors"]
+    assert not (tmp_path / "features").exists()
+    assert engine.db.get_step(step_id)["feature_content"] is None
+
+
+def test_set_feature_rejects_traversal_filename(engine, tmp_path):
+    pid = engine.create_project("myapp", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    with pytest.raises(ValueError):
+        engine.set_feature(step_id, sid, VALID_FEATURE, filename="../evil")
