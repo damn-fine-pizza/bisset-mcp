@@ -137,6 +137,27 @@ BissetMCP/
   docker-compose.yml
 ```
 
+## Demo: the BDD gate in action
+
+A deterministic, self-contained demo of the core thesis — *Bisset is not a
+test runner, it is a gatekeeper*. It spins up an isolated server, runs red
+Gherkin scenarios, proves that acceptance is **blocked** while tests are red,
+applies the fix, and shows acceptance succeeding:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+./scripts/demo_bdd_gate.sh
+```
+
+Expected output: red tests → acceptance blocked → fix applied → green tests →
+acceptance granted → session completed. The script exits non-zero if any of
+those expectations fails (in particular, if the gate fails to block).
+
+To run the same loop driven by an AI client instead of a script, see
+[`examples/demo/claude-code-demo.md`](examples/demo/claude-code-demo.md).
+
 ## Running tests
 
 ```bash
@@ -149,11 +170,13 @@ All variables are read from `.env` (copy `.env.example`):
 
 | Variable                  | Default                                      | Description                          |
 |---------------------------|----------------------------------------------|--------------------------------------|
-| `DATABASE_PATH`           | `./orchestrator/workflow_server/workflow.db`  | SQLite database file path            |
+| `DATABASE_PATH`           | `~/.bisset/bisset.db`                        | SQLite database file path            |
 | `WORKFLOW_SERVER_PORT`    | `8765`                                       | HTTP port for the workflow server    |
-| `WORKFLOW_PRETTY_JSON_LOGS`| `1`                                         | `1` = pretty-print JSON logs         |
-| `BDD_COVERAGE_THRESHOLD`  | `80`                                         | Minimum Gherkin coverage %           |
-| `MCP_SERVER_HOST`         | `http://localhost:8765`                      | URL the MCP proxy uses to reach backend |
+| `WORKFLOW_BACKEND_URL`    | `http://127.0.0.1:8765`                      | URL the MCP proxy uses to reach backend |
+
+Note on coverage: only the **behave** adapter reports a real (scenario-level)
+coverage; pytest/generic adapters always report `0.0`. Coverage gating is
+opt-in via session rules — see `docs/bdd-enforcement.md`.
 
 ## License
 

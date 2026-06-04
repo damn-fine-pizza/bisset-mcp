@@ -92,6 +92,55 @@ def test_session_resume(engine):
     assert sess["status"] == "active"
 
 
+def test_default_rules_green_tests_advance(engine):
+    """A session created without rules must use sane defaults: green tests advance."""
+    pid = engine.create_project("myapp", "/tmp/myapp")
+    sid = engine.start_session(pid, "new_project")  # no default_rules
+    step_id = engine.add_step(sid, "Step 1", "First step", 1)
+    engine.record_test_run(step_id, sid, passed=2, failed=0, coverage=0.0)
+    action = engine.complete_step(step_id, sid)
+    assert action == "advance"
+    assert engine.db.get_step(step_id)["status"] == "passed"
+
+
+def test_default_rules_red_tests_retry(engine):
+    """Without session rules, failing tests must retry — never advance."""
+    pid = engine.create_project("myapp", "/tmp/myapp")
+    sid = engine.start_session(pid, "new_project")
+    step_id = engine.add_step(sid, "Step 1", "First step", 1)
+    engine.record_test_run(step_id, sid, passed=1, failed=1, coverage=50.0)
+    action = engine.complete_step(step_id, sid)
+    assert action == "retry"
+    assert engine.db.get_step(step_id)["status"] == "active"
+
+
+def test_default_rules_red_tests_exhausted_retries_ask_user(engine):
+    pid = engine.create_project("myapp", "/tmp/myapp")
+    sid = engine.start_session(pid, "new_project")
+    step_id = engine.add_step(sid, "Step 1", "First step", 1)
+    engine.db.update_step(step_id, retries=3)
+    engine.record_test_run(step_id, sid, passed=1, failed=1, coverage=50.0)
+    action = engine.complete_step(step_id, sid)
+    assert action == "ask_user"
+
+
+def test_default_rules_human_gate_asks_user_even_when_green(engine):
+    pid = engine.create_project("myapp", "/tmp/myapp")
+    sid = engine.start_session(pid, "new_project")
+    step_id = engine.add_step(sid, "Step 1", "First step", 1, gate="human_approval")
+    engine.record_test_run(step_id, sid, passed=2, failed=0, coverage=100.0)
+    action = engine.complete_step(step_id, sid)
+    assert action == "ask_user"
+
+
+def test_default_rules_no_tests_ask_user(engine):
+    pid = engine.create_project("myapp", "/tmp/myapp")
+    sid = engine.start_session(pid, "new_project")
+    step_id = engine.add_step(sid, "Step 1", "First step", 1)
+    action = engine.complete_step(step_id, sid)
+    assert action == "ask_user"
+
+
 def test_project_lock_isolation(engine):
     pid1 = engine.create_project("app1", "/tmp/app1")
     pid2 = engine.create_project("app2", "/tmp/app2")

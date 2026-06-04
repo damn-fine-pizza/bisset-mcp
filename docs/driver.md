@@ -1,3 +1,5 @@
+> **Historical design document.** This describes the v1 specification and does not match the current implementation. For current behavior see the README, `docs/bdd-enforcement.md`, and `docs/plans/2026-03-06-bisset-v2-design.md`.
+
 Driver schema
 
 The deterministic driver is exposed as workflow_tick and returns a single JSON command describing the only valid next action. Schema (keys may be omitted when irrelevant):

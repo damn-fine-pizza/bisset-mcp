@@ -166,7 +166,6 @@ fi
 info "Starting workflow_server on port $PORT (hot reload enabled)..."
 
 cd "$REPO_ROOT"
-WORKFLOW_PRETTY_JSON_LOGS="${WORKFLOW_PRETTY_JSON_LOGS:-1}" \
 DATABASE_PATH="$DB_PATH" \
 FORCE_COLOR=1 \
 nohup "$PYTHON" -m uvicorn orchestrator.workflow_server.app:app \

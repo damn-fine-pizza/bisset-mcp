@@ -1,3 +1,5 @@
+> **Historical design document.** This describes the v1 specification and does not match the current implementation. For current behavior see the README, `docs/bdd-enforcement.md`, and `docs/plans/2026-03-06-bisset-v2-design.md`.
+
 # Claude MCP Server Specification Plan
 ## Analysis & Design Document for BDD-first Workflow Orchestration
 
