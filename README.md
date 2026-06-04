@@ -4,6 +4,10 @@
 
 Bisset itself does **not** call any LLM API. It is a pure orchestration layer: it manages state, enforces gates, and exposes tools. The AI client (Claude, Copilot, etc.) does the thinking.
 
+## Status
+
+Bisset is an experimental prototype. It is a local-first MCP workflow controller for AI-assisted software development. It is not production-ready.
+
 ## Architecture
 
 ```
@@ -26,8 +30,7 @@ git clone <repo-url> && cd BissetMCP
 # 2. Create virtualenv + install deps
 python3 -m venv .venv
 source .venv/bin/activate
-pip install fastapi uvicorn httpx pydantic
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt
 
 # 3. Copy config
 cp .env.example .env
@@ -51,8 +54,7 @@ Bisset works with any MCP-compatible client. Below are the two primary targets.
 ```bash
 claude mcp add bisset \
   -e WORKFLOW_BACKEND_URL=http://127.0.0.1:8765 \
-  -e PYTHONPATH=/absolute/path/to/BissetMCP \
-  -- /absolute/path/to/BissetMCP/.venv/bin/python3 -m orchestrator.mcp_server
+  -- /absolute/path/to/BissetMCP/run-mcp.sh
 ```
 
 Or use the helper:
@@ -128,7 +130,9 @@ BissetMCP/
     server.sh            # Start/stop workflow server
     db.sh                # Database manager
   docs/                  # Design docs
-  requirements.txt
+  run-mcp.sh             # MCP STDIO server launcher (.venv-based)
+  requirements.txt       # Runtime dependencies
+  requirements-dev.txt   # Test + demo dependencies
   Dockerfile
   docker-compose.yml
 ```

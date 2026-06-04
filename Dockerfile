@@ -9,8 +9,7 @@ COPY orchestrator/ /app/orchestrator/
 COPY adapters/ /app/adapters/
 COPY requirements.txt /app/
 
-RUN pip install --no-cache-dir fastapi uvicorn[standard] httpx \
-    && pip install --no-cache-dir -r requirements.txt 2>/dev/null || true
+RUN pip install --no-cache-dir -r requirements.txt
 
 ENV PYTHONUNBUFFERED=1 \
     DATABASE_PATH=/data/workflow.db \
