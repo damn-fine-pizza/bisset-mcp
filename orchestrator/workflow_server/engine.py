@@ -141,6 +141,47 @@ class WorkflowEngine:
         return {"written": True, "feature_path": rel_path,
                 "hash": digest, "errors": []}
 
+    def _detect_drift(self, step: dict, session_id: str, abs_path: str) -> tuple[str, bool]:
+        """Read disk content and realign the DB copy if it drifted.
+
+        Returns (disk_content, drifted). Caller must ensure the file exists.
+        """
+        with open(abs_path, "r", encoding="utf-8") as fh:
+            disk_content = fh.read()
+        disk_hash = hashlib.sha256(disk_content.encode("utf-8")).hexdigest()
+        drifted = bool(step.get("feature_hash")) and disk_hash != step["feature_hash"]
+        if drifted:
+            self.db.update_step(step["id"], feature_content=disk_content,
+                                feature_hash=disk_hash)
+            self.db.add_event(session_id, "feature_drift", step_id=step["id"],
+                              data={"feature_path": step["feature_path"],
+                                    "new_hash": disk_hash})
+        return disk_content, drifted
+
+    def get_feature(self, step_id: str, session_id: str) -> dict:
+        """Read the step's feature from disk (truth), reporting drift/missing."""
+        step = self.db.get_step(step_id)
+        if not step:
+            raise ValueError(f"Step not found: {step_id}")
+        if not step.get("feature_path"):
+            raise ValueError(f"Step has no feature_path: {step_id}")
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        project = self.db.get_project(session["project_id"])
+        if not project:
+            raise ValueError(f"Project not found: {session['project_id']}")
+        rel_path, abs_path = self._feature_paths(step, project)
+
+        if not os.path.isfile(abs_path):
+            return {"content": step.get("feature_content"),
+                    "feature_path": rel_path,
+                    "feature_drifted": False, "file_missing": True}
+
+        content, drifted = self._detect_drift(step, session_id, abs_path)
+        return {"content": content, "feature_path": rel_path,
+                "feature_drifted": drifted, "file_missing": False}
+
     # -- Test Execution ---------------------------------------------------------
 
     def record_test_run(self, step_id: str, session_id: str,

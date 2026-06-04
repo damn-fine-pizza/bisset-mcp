@@ -229,3 +229,47 @@ def test_set_feature_overwrites_and_updates_hash(engine, tmp_path):
     assert second["hash"] != first["hash"]
     assert (tmp_path / "features" / "calc.feature").read_text() == updated
     assert engine.db.get_step(step_id)["feature_content"] == updated
+
+
+def test_get_feature_no_drift(engine, tmp_path):
+    pid = engine.create_project("myapp", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Calc", "d", 1)
+    engine.set_feature(step_id, sid, VALID_FEATURE)
+
+    result = engine.get_feature(step_id, sid)
+    assert result["content"] == VALID_FEATURE
+    assert result["feature_drifted"] is False
+    assert result["file_missing"] is False
+
+
+def test_get_feature_detects_drift_and_realigns(engine, tmp_path):
+    pid = engine.create_project("myapp", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Calc", "d", 1)
+    engine.set_feature(step_id, sid, VALID_FEATURE)
+
+    edited = VALID_FEATURE + "\n  Scenario: Human added\n    Given x\n"
+    (tmp_path / "features" / "calc.feature").write_text(edited)
+
+    result = engine.get_feature(step_id, sid)
+    assert result["feature_drifted"] is True
+    assert result["content"] == edited
+    # DB copy realigned, event logged
+    assert engine.db.get_step(step_id)["feature_content"] == edited
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "feature_drift" for e in events)
+    # Second read: no longer drifted
+    assert engine.get_feature(step_id, sid)["feature_drifted"] is False
+
+
+def test_get_feature_file_missing_returns_db_copy(engine, tmp_path):
+    pid = engine.create_project("myapp", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Calc", "d", 1)
+    engine.set_feature(step_id, sid, VALID_FEATURE)
+    (tmp_path / "features" / "calc.feature").unlink()
+
+    result = engine.get_feature(step_id, sid)
+    assert result["file_missing"] is True
+    assert result["content"] == VALID_FEATURE  # last DB copy as reference
