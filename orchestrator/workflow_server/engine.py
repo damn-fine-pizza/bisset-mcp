@@ -146,8 +146,11 @@ class WorkflowEngine:
 
         Returns (disk_content, drifted). Caller must ensure the file exists.
         """
-        with open(abs_path, "r", encoding="utf-8") as fh:
-            disk_content = fh.read()
+        try:
+            with open(abs_path, "r", encoding="utf-8") as fh:
+                disk_content = fh.read()
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Feature file is not valid UTF-8: {abs_path}") from exc
         disk_hash = hashlib.sha256(disk_content.encode("utf-8")).hexdigest()
         drifted = bool(step.get("feature_hash")) and disk_hash != step["feature_hash"]
         if drifted:
