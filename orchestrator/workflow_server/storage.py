@@ -5,7 +5,7 @@ import sqlite3
 import time
 import uuid
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class Storage:
@@ -72,9 +72,10 @@ class Storage:
     # ── Schema Migration ──────────────────────────────────────────────────────
 
     def _migrate(self):
-        """Create v1 schema from scratch (no legacy migration)."""
+        """Create or upgrade the schema (v2 adds feature_content/feature_hash)."""
         cur = self.conn.cursor()
 
+        current = 0
         cur.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
         )
@@ -83,10 +84,16 @@ class Storage:
                 "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
             )
             row = cur.fetchone()
-            if row and row[0] >= SCHEMA_VERSION:
+            current = row[0] if row else 0
+            if current >= SCHEMA_VERSION:
                 return
 
-        cur.executescript("""
+        if current == 1:
+            # v1 -> v2: additive columns on steps
+            cur.execute("ALTER TABLE steps ADD COLUMN feature_content TEXT")
+            cur.execute("ALTER TABLE steps ADD COLUMN feature_hash TEXT")
+        else:
+            cur.executescript("""
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER NOT NULL
             );
@@ -118,6 +125,8 @@ class Storage:
                 description TEXT NOT NULL DEFAULT '',
                 "order" INTEGER NOT NULL,
                 feature_path TEXT,
+                feature_content TEXT,
+                feature_hash TEXT,
                 gate TEXT NOT NULL DEFAULT 'tests_only',
                 depends_on TEXT,
                 rules_override TEXT,
@@ -147,7 +156,7 @@ class Storage:
                 data TEXT,
                 timestamp REAL NOT NULL
             );
-        """)
+            """)
 
         cur.execute("DELETE FROM schema_version")
         cur.execute(
@@ -318,6 +327,8 @@ class Storage:
             "description",
             "order",
             "feature_path",
+            "feature_content",
+            "feature_hash",
             "gate",
             "depends_on",
             "rules_override",
