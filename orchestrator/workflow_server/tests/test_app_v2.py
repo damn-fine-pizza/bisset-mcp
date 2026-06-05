@@ -202,3 +202,58 @@ def test_step_list(client):
     assert r3.status_code == 200
     payload = json.loads(r3.json()["content"][0]["text"])
     assert len(payload["steps"]) == 2
+
+
+def _payload(response):
+    """Extract payload dict from ResponseWrapper response."""
+    return json.loads(response.json()["content"][0]["text"])
+
+
+VALID_FEATURE = """Feature: Calculator
+  Scenario: Add
+    Given the numbers 1 and 2
+    When I add them
+    Then the result is 3
+"""
+
+
+def test_step_set_and_get_feature_endpoints(client, tmp_path):
+    r = client.post("/project_create", json={
+        "name": "gf-app", "path": str(tmp_path), "adapter": "behave",
+    })
+    pid = _payload(r)["project_id"]
+    r = client.post("/session_start", json={"project_id": pid, "workflow_type": "new_feature"})
+    sid = _payload(r)["session_id"]
+    r = client.post("/step_add", json={"session_id": sid, "title": "Calc", "order": 1})
+    step_id = _payload(r)["step_id"]
+
+    r = client.post("/step_set_feature", json={
+        "step_id": step_id, "session_id": sid, "content": VALID_FEATURE,
+    })
+    assert r.status_code == 200
+    body = _payload(r)
+    assert body["written"] is True
+    assert body["feature_path"] == "features/calc.feature"
+
+    r = client.get(f"/step_get_feature?step_id={step_id}&session_id={sid}")
+    body = _payload(r)
+    assert body["content"] == VALID_FEATURE
+    assert body["feature_drifted"] is False
+
+
+def test_step_set_feature_rejects_bad_gherkin(client, tmp_path):
+    r = client.post("/project_create", json={
+        "name": "gf-bad", "path": str(tmp_path), "adapter": "behave",
+    })
+    pid = _payload(r)["project_id"]
+    r = client.post("/session_start", json={"project_id": pid, "workflow_type": "new_feature"})
+    sid = _payload(r)["session_id"]
+    r = client.post("/step_add", json={"session_id": sid, "title": "Bad", "order": 1})
+    step_id = _payload(r)["step_id"]
+
+    r = client.post("/step_set_feature", json={
+        "step_id": step_id, "session_id": sid, "content": "garbage",
+    })
+    body = _payload(r)
+    assert body["written"] is False
+    assert body["errors"]
