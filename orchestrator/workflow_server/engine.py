@@ -231,16 +231,19 @@ class WorkflowEngine:
             return {"syntax_ok": False, "steps_defined": False,
                     "undefined_steps": [], "errors": [output]}
 
-        m = self._UNDEFINED_COUNT_RE.search(output)
-        undefined_count = int(m.group(1)) if m else 0
+        matches = self._UNDEFINED_COUNT_RE.findall(output)
+        undefined_count = int(matches[-1]) if matches else 0
         undefined_steps: list[str] = []
         if undefined_count:
-            proc2 = subprocess.run([runner, "--dry-run", step["feature_path"]],
-                                   capture_output=True, text=True,
-                                   timeout=60, cwd=project["path"])
-            snippet_out = strip_ansi(proc2.stdout + proc2.stderr)
-            undefined_steps = list(dict.fromkeys(
-                self._SNIPPET_STEP_RE.findall(snippet_out)))
+            try:
+                proc2 = subprocess.run([runner, "--dry-run", step["feature_path"]],
+                                       capture_output=True, text=True,
+                                       timeout=60, cwd=project["path"])
+                snippet_out = strip_ansi(proc2.stdout + proc2.stderr)
+                undefined_steps = list(dict.fromkeys(
+                    self._SNIPPET_STEP_RE.findall(snippet_out)))
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                undefined_steps = []  # count is still reported; names are best-effort
 
         return {"syntax_ok": True,
                 "steps_defined": undefined_count == 0,
