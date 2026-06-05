@@ -257,3 +257,42 @@ def test_step_set_feature_rejects_bad_gherkin(client, tmp_path):
     body = _payload(r)
     assert body["written"] is False
     assert body["errors"]
+
+
+def test_step_run_tests_reports_feature_drifted(client, tmp_path):
+    r = client.post("/project_create", json={
+        "name": "drift-app", "path": str(tmp_path),
+        "test_runner": "true", "adapter": "generic",
+    })
+    pid = _payload(r)["project_id"]
+    r = client.post("/session_start", json={"project_id": pid, "workflow_type": "new_feature"})
+    sid = _payload(r)["session_id"]
+    r = client.post("/step_add", json={"session_id": sid, "title": "Calc", "order": 1})
+    step_id = _payload(r)["step_id"]
+    r = client.post("/step_set_feature", json={
+        "step_id": step_id, "session_id": sid, "content": VALID_FEATURE,
+    })
+    assert _payload(r)["written"] is True
+
+    (tmp_path / "features" / "calc.feature").write_text(VALID_FEATURE + "# edited\n")
+    r = client.post("/step_run_tests", json={"step_id": step_id, "session_id": sid})
+    body = _payload(r)
+    assert body["feature_drifted"] is True
+    assert body["passed"] == 1  # /bin/true via generic adapter
+
+
+def test_step_validate_feature_requires_behave(client, tmp_path):
+    r = client.post("/project_create", json={
+        "name": "val-app", "path": str(tmp_path), "adapter": "pytest",
+    })
+    pid = _payload(r)["project_id"]
+    r = client.post("/session_start", json={"project_id": pid, "workflow_type": "new_feature"})
+    sid = _payload(r)["session_id"]
+    r = client.post("/step_add", json={"session_id": sid, "title": "S", "order": 1})
+    step_id = _payload(r)["step_id"]
+    r = client.post("/step_set_feature", json={
+        "step_id": step_id, "session_id": sid, "content": VALID_FEATURE,
+    })
+    r = client.get(f"/step_validate_feature?step_id={step_id}&session_id={sid}")
+    data = r.json()
+    assert data["is_error"] is True  # behave adapter required

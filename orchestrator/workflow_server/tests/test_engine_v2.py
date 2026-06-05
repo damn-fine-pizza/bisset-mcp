@@ -373,3 +373,13 @@ def test_validate_feature_requires_behave_adapter(engine, tmp_path):
     step_id = engine.add_step(sid, "S", "d", 1, feature_path="x.feature")
     with pytest.raises(ValueError):
         engine.validate_feature(step_id, sid)
+
+
+def test_validate_feature_runner_missing(engine, tmp_path):
+    pid = engine.create_project("p", str(tmp_path),
+                                test_runner="/nonexistent/behave", adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    engine.set_feature(step_id, sid, VALID_FEATURE)
+    with pytest.raises(ValueError, match="behave runner not found"):
+        engine.validate_feature(step_id, sid)

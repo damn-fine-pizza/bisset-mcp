@@ -93,7 +93,7 @@ exit-code-only parsing.
 
 Drift policy: the human owns the spec. Manual edits never block execution;
 they are detected (hash mismatch), reported in tool responses, logged as
-`feature_drift` events, and the DB copy realigns to disk.
+`feature_drift` events (feature submissions are logged as `feature_set`), and the DB copy realigns to disk.
 
 All adapter output is stripped of ANSI escape codes before being stored or
 returned, so the model receives clean, structured feedback.
