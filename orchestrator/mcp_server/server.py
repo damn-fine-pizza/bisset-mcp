@@ -73,6 +73,22 @@ class BissetMCPServer:
             # Pipeline
             {"name": "step_current", "description": "Get current active step",
              "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
+            {"name": "step_set_feature",
+             "description": "Submit Gherkin content for a step; Bisset validates, writes to the project features dir and registers content + hash",
+             "inputSchema": {"type": "object", "properties": {
+                 "step_id": {"type": "string"}, "session_id": {"type": "string"},
+                 "content": {"type": "string"}, "filename": {"type": "string"},
+             }, "required": ["step_id", "session_id", "content"]}},
+            {"name": "step_get_feature",
+             "description": "Read the step's .feature from disk (truth); reports feature_drifted and file_missing",
+             "inputSchema": {"type": "object", "properties": {
+                 "step_id": {"type": "string"}, "session_id": {"type": "string"},
+             }, "required": ["step_id", "session_id"]}},
+            {"name": "step_validate_feature",
+             "description": "Dry-run validation of the step's feature: syntax_ok, steps_defined, undefined_steps",
+             "inputSchema": {"type": "object", "properties": {
+                 "step_id": {"type": "string"}, "session_id": {"type": "string"},
+             }, "required": ["step_id", "session_id"]}},
             {"name": "step_run_tests", "description": "Execute Gherkin tests for step",
              "inputSchema": {"type": "object", "properties": {
                  "step_id": {"type": "string"}, "session_id": {"type": "string"},

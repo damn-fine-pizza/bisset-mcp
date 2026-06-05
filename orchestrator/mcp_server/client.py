@@ -22,6 +22,8 @@ _GET_TOOLS = {
     "pipeline_view",
     "pipeline_report",
     "event_log",
+    "step_get_feature",
+    "step_validate_feature",
 }
 
 
