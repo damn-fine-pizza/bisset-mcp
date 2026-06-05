@@ -96,7 +96,7 @@ post() { curl -sf -X POST "$BASE/$1" -H 'Content-Type: application/json' -d "$2"
 get()  { curl -sf "$BASE/$1"; }
 
 phase "2/8" "Creating project, session, and gated step"
-RESP="$(post project_create "{\"name\":\"bdd-gate-demo\",\"path\":\"$WORKDIR/project\",\"test_runner\":\"$VENV_BEHAVE\",\"test_args\":\"--format json\",\"adapter\":\"behave\"}")"
+RESP="$(post project_create "{\"name\":\"bdd-gate-demo\",\"path\":\"$WORKDIR/project\",\"test_runner\":\"$VENV_BEHAVE\",\"test_args\":\"--format json --no-snippets\",\"adapter\":\"behave\"}")"
 PROJECT_ID="$(jget "$RESP" project_id)"
 RESP="$(post session_start "{\"project_id\":\"$PROJECT_ID\",\"workflow_type\":\"new_feature\"}")"
 SESSION_ID="$(jget "$RESP" session_id)"
