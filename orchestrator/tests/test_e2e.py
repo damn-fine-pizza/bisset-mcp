@@ -125,3 +125,34 @@ def test_full_pipeline_lifecycle(client):
     projects = _payload(r)["projects"]
     assert len(projects) == 1
     assert projects[0]["name"] == "e2e-app"
+
+
+def test_gherkin_feature_lifecycle(client, tmp_path):
+    """set -> get -> manual edit -> drift reported on read."""
+    r = client.post("/project_create", json={
+        "name": "gherkin-e2e", "path": str(tmp_path), "adapter": "behave",
+    })
+    pid = _payload(r)["project_id"]
+    r = client.post("/session_start", json={"project_id": pid, "workflow_type": "new_feature"})
+    sid = _payload(r)["session_id"]
+    r = client.post("/step_add", json={"session_id": sid, "title": "Calc feature", "order": 1})
+    step_id = _payload(r)["step_id"]
+
+    feature = "Feature: Calc\n  Scenario: Add\n    Given two numbers\n    When added\n    Then result\n"
+    r = client.post("/step_set_feature", json={
+        "step_id": step_id, "session_id": sid, "content": feature,
+    })
+    assert _payload(r)["written"] is True
+    path = tmp_path / "features" / "calc-feature.feature"
+    assert path.read_text() == feature
+
+    # human edits the spec on disk
+    path.write_text(feature + "    And audited\n")
+    r = client.get(f"/step_get_feature?step_id={step_id}&session_id={sid}")
+    body = _payload(r)
+    assert body["feature_drifted"] is True
+
+    # audit trail
+    r = client.get(f"/event_log?session_id={sid}")
+    types = {e["event_type"] for e in _payload(r)["events"]}
+    assert {"feature_set", "feature_drift"} <= types
