@@ -1,7 +1,7 @@
 # Gherkin Tools — Design Document
 
 **Date:** 2026-06-04
-**Status:** Approved
+**Status:** Implemented
 **Scope:** Approach B, first slice — the three Gherkin tools from the v2 design
 (`step_set_feature`, `step_get_feature`, `step_validate_feature`).
 
