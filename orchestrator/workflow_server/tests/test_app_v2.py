@@ -362,3 +362,109 @@ def test_session_resume_without_interview_has_null_block(client):
     body = _payload(r)
     assert body["session_id"] == sid
     assert body["interview"] is None
+
+
+def test_analysis_flow_endpoints(client, tmp_path):
+    r = client.post("/project_create", json={
+        "name": "legacy", "path": str(tmp_path), "adapter": "behave"})
+    pid = json.loads(r.json()["content"][0]["text"])["project_id"]
+    r = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "generate_tests"})
+    sid = json.loads(r.json()["content"][0]["text"])["session_id"]
+
+    r = client.post("/analysis_submit", json={"session_id": sid, "steps": [
+        {"title": "Cover health", "feature_draft": VALID_FEATURE},
+        {"title": "Cover orders", "description": "order flows"},
+    ]})
+    assert r.json()["is_error"] is False
+    body = json.loads(r.json()["content"][0]["text"])
+    assert body["submitted"] is True
+    assert body["steps_proposed"] == 2
+
+    r = client.get(f"/analysis_view?session_id={sid}")
+    body = json.loads(r.json()["content"][0]["text"])
+    assert body["analysis_status"] == "open"
+    assert len(body["steps"]) == 2
+
+    r = client.post("/analysis_approve", json={"session_id": sid})
+    assert r.json()["is_error"] is False
+    body = json.loads(r.json()["content"][0]["text"])
+    assert body["steps_created"] == 2
+    assert (tmp_path / "features" / "01-cover-health.feature").exists()
+
+
+def test_analysis_submit_rejects_bad_gherkin(client):
+    r = client.post("/project_create", json={
+        "name": "legacy", "path": "/tmp/an-api-bad"})
+    pid = json.loads(r.json()["content"][0]["text"])["project_id"]
+    r = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "generate_tests"})
+    sid = json.loads(r.json()["content"][0]["text"])["session_id"]
+
+    r = client.post("/analysis_submit", json={"session_id": sid, "steps": [
+        {"title": "Bad", "feature_draft": "not gherkin"},
+    ]})
+    # same contract as step_set_feature: structured refusal, not a transport error
+    assert r.json()["is_error"] is False
+    body = json.loads(r.json()["content"][0]["text"])
+    assert body["submitted"] is False
+    assert body["errors"][0]["title"] == "Bad"
+
+
+def test_step_add_blocked_while_proposal_open(client):
+    r = client.post("/project_create", json={
+        "name": "legacy", "path": "/tmp/an-api-gate"})
+    pid = json.loads(r.json()["content"][0]["text"])["project_id"]
+    r = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "generate_tests"})
+    sid = json.loads(r.json()["content"][0]["text"])["session_id"]
+
+    client.post("/analysis_submit", json={"session_id": sid, "steps": [
+        {"title": "Proposed"},
+    ]})
+    r = client.post("/step_add", json={"session_id": sid, "title": "S1", "order": 1})
+    assert r.json()["is_error"] is True
+    err = json.loads(r.json()["content"][0]["text"])["error"]
+    assert "analysis_approve" in err
+
+
+def test_analysis_discard_endpoint(client):
+    r = client.post("/project_create", json={
+        "name": "legacy", "path": "/tmp/an-api-disc"})
+    pid = json.loads(r.json()["content"][0]["text"])["project_id"]
+    r = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "generate_tests"})
+    sid = json.loads(r.json()["content"][0]["text"])["session_id"]
+
+    client.post("/analysis_submit", json={"session_id": sid, "steps": [
+        {"title": "Proposed"},
+    ]})
+    r = client.post("/analysis_discard", json={"session_id": sid})
+    body = json.loads(r.json()["content"][0]["text"])
+    assert body["analysis_status"] == "discarded"
+    # gate released
+    r = client.post("/step_add", json={"session_id": sid, "title": "S1", "order": 1})
+    assert r.json()["is_error"] is False
+
+
+def test_session_resume_reports_analysis_block(client):
+    r = client.post("/project_create", json={
+        "name": "legacy", "path": "/tmp/an-api-resume"})
+    pid = json.loads(r.json()["content"][0]["text"])["project_id"]
+    r = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "generate_tests"})
+    sid = json.loads(r.json()["content"][0]["text"])["session_id"]
+
+    # before any analysis: block is null
+    r = client.post("/session_resume", json={"project_id": pid})
+    body = json.loads(r.json()["content"][0]["text"])
+    assert body["session_id"] == sid
+    assert body["analysis"] is None
+
+    client.post("/analysis_submit", json={"session_id": sid, "steps": [
+        {"title": "Proposed"},
+    ]})
+    r = client.post("/session_resume", json={"project_id": pid})
+    body = json.loads(r.json()["content"][0]["text"])
+    assert body["analysis"]["status"] == "open"
+    assert body["analysis"]["steps_proposed"] == 1
