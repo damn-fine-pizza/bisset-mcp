@@ -5,7 +5,7 @@ import sqlite3
 import time
 import uuid
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class Storage:
@@ -219,6 +219,24 @@ class Storage:
         );
         """)
 
+    @staticmethod
+    def _migrate_v3_to_v4(cur: sqlite3.Cursor) -> None:
+        """v3 -> v4: analysis proposal as session state (guarded: ALTER has no IF NOT EXISTS)."""
+        existing = {r[1] for r in cur.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "analysis_status" not in existing:
+            cur.execute("ALTER TABLE sessions ADD COLUMN analysis_status TEXT")
+        cur.executescript("""
+        CREATE TABLE IF NOT EXISTS proposal_steps (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            "order" INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            feature_draft TEXT,
+            created_at REAL NOT NULL
+        );
+        """)
+
     # ── Project ───────────────────────────────────────────────────────────────
 
     def create_project(
@@ -371,6 +389,46 @@ class Storage:
             (answer, time.time(), question_id),
         )
         self.conn.commit()
+
+    # ── Analysis ──────────────────────────────────────────────────────────────
+
+    def set_analysis_status(self, session_id: str, status: str) -> None:
+        self.conn.execute(
+            "UPDATE sessions SET analysis_status=? WHERE id=?",
+            (status, session_id),
+        )
+        self.conn.commit()
+
+    def replace_proposal_steps(self, session_id: str, steps: list[dict]) -> list[str]:
+        """Replace the session's proposal with `steps` (single commit).
+
+        Each step dict: title (required), description, feature_draft.
+        The table always holds the *current* proposal; revision history
+        lives in the event log. Returns the new row ids in order.
+        """
+        self._require_lock()
+        self.conn.execute(
+            "DELETE FROM proposal_steps WHERE session_id=?", (session_id,)
+        )
+        ids = []
+        now = time.time()
+        for idx, step in enumerate(steps, start=1):
+            row_id = self._new_id()
+            self.conn.execute(
+                'INSERT INTO proposal_steps (id, session_id, "order", title, '
+                "description, feature_draft, created_at) VALUES (?,?,?,?,?,?,?)",
+                (row_id, session_id, idx, step["title"],
+                 step.get("description", ""), step.get("feature_draft"), now),
+            )
+            ids.append(row_id)
+        self.conn.commit()
+        return ids
+
+    def list_proposal_steps(self, session_id: str) -> list[dict]:
+        return self._fetchall_dict(
+            'SELECT * FROM proposal_steps WHERE session_id=? ORDER BY "order"',
+            (session_id,),
+        )
 
     # ── Step ──────────────────────────────────────────────────────────────────
 
