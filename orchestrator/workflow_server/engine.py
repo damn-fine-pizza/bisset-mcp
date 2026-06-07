@@ -131,6 +131,9 @@ class WorkflowEngine:
             raise ValueError(f"Interview question not found: {question_id}")
         revised = q["status"] == "answered"
         self.db.answer_interview_question(question_id, answer)
+        # Deliberate asymmetry with question_asked: the answer text lives on
+        # the interview_questions row (canonical); events carry correlation
+        # ids only, so free text is not duplicated into the audit log.
         self.db.add_event(q["session_id"],
                           "answer_revised" if revised else "answer_recorded",
                           data={"question_id": question_id, "order": q["order"]})

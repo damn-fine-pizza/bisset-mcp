@@ -526,7 +526,9 @@ def test_interview_reopen_after_complete(engine):
     assert r["reopened"] is True
     assert engine.db.get_session(sid)["interview_status"] == "open"
     events = engine.db.list_events(sid)
-    assert any(e["event_type"] == "interview_reopened" for e in events)
+    reopened_events = [e for e in events if e["event_type"] == "interview_reopened"]
+    assert len(reopened_events) == 1
+    assert reopened_events[0]["data"]["question_id"] == r["question_id"]
     # the gate is re-armed
     with pytest.raises(ValueError, match="Interview in progress"):
         engine.add_step(sid, "S1", "d", 1)

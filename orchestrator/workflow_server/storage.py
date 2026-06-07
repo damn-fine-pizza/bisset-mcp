@@ -110,6 +110,8 @@ class Storage:
             self._create_base_schema_v1(cur)
             current = 1
 
+        # Each rung must be idempotent: a crash mid-ladder leaves the version
+        # unbumped, so every rung from `current` replays on the next open.
         while current < SCHEMA_VERSION:
             getattr(self, f"_migrate_v{current}_to_v{current + 1}")(cur)
             current += 1

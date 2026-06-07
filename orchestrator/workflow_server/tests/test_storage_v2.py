@@ -314,6 +314,20 @@ def test_answer_interview_question(db):
     assert db.get_open_interview_question(sid) is None
 
 
+def test_add_interview_question_order_is_per_session(db):
+    """Order numbering is scoped to the session, never global."""
+    pid = db.create_project("myapp", "/tmp/iso-app", "pytest", "", "pytest", "features/")
+    db.lock_project(pid)
+    sid1 = db.create_session("new_project")
+    sid2 = db.create_session("new_feature")
+    assert db.list_interview_questions(sid2) == []
+    db.add_interview_question(sid1, "Q1")
+    db.add_interview_question(sid1, "Q2")
+    db.add_interview_question(sid2, "Q1-s2")
+    qs2 = db.list_interview_questions(sid2)
+    assert [q["order"] for q in qs2] == [1]  # must not be 3
+
+
 def test_set_interview_status(db):
     pid = db.create_project("myapp", "/tmp/is-app", "pytest", "", "pytest", "features/")
     db.lock_project(pid)
