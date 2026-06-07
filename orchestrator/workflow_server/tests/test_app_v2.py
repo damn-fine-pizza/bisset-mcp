@@ -296,3 +296,60 @@ def test_step_validate_feature_requires_behave(client, tmp_path):
     r = client.get(f"/step_validate_feature?step_id={step_id}&session_id={sid}")
     data = r.json()
     assert data["is_error"] is True  # behave adapter required
+
+
+def _interview_session(client, path):
+    r = client.post("/project_create", json={"name": "iv-app", "path": path})
+    pid = _payload(r)["project_id"]
+    r = client.post("/session_start", json={"project_id": pid, "workflow_type": "new_project"})
+    return pid, _payload(r)["session_id"]
+
+
+def test_interview_flow_endpoints(client):
+    pid, sid = _interview_session(client, "/tmp/iv-flow")
+
+    r = client.post("/interview_question", json={
+        "session_id": sid, "question": "What does the project do?",
+    })
+    body = _payload(r)
+    qid = body["question_id"]
+    assert body["order"] == 1
+
+    # gate: step_add blocked while the interview is open
+    r = client.post("/step_add", json={"session_id": sid, "title": "S1", "order": 1})
+    assert r.json()["is_error"] is True
+    assert "Interview in progress" in _payload(r)["error"]
+
+    r = client.post("/interview_answer", json={"question_id": qid, "answer": "It bakes pizzas"})
+    assert _payload(r)["revised"] is False
+
+    r = client.post("/interview_complete", json={"session_id": sid})
+    body = _payload(r)
+    assert body == {"interview_status": "complete", "asked": 1, "answered": 1}
+
+    # gate open: step_add now succeeds
+    r = client.post("/step_add", json={"session_id": sid, "title": "S1", "order": 1})
+    assert r.json()["is_error"] is False
+
+    r = client.get(f"/session_status?session_id={sid}")
+    assert _payload(r)["interview"]["status"] == "complete"
+
+
+def test_interview_question_double_open_is_error(client):
+    pid, sid = _interview_session(client, "/tmp/iv-double")
+    client.post("/interview_question", json={"session_id": sid, "question": "First?"})
+    r = client.post("/interview_question", json={"session_id": sid, "question": "Second?"})
+    assert r.json()["is_error"] is True
+    assert "already open" in _payload(r)["error"]
+
+
+def test_session_resume_reports_pending_question(client):
+    pid, sid = _interview_session(client, "/tmp/iv-resume")
+    client.post("/interview_question", json={
+        "session_id": sid, "question": "Which constraints apply?",
+    })
+    r = client.post("/session_resume", json={"project_id": pid})
+    body = _payload(r)
+    assert body["session_id"] == sid
+    assert body["interview"]["status"] == "open"
+    assert body["interview"]["pending_question"]["question"] == "Which constraints apply?"

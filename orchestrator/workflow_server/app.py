@@ -208,8 +208,9 @@ async def session_resume(request: Request) -> Dict[str, Any]:
         body = await request.json()
         project_id = body["project_id"]
         sid = request.app.state.engine.resume_session(project_id)
+        interview = request.app.state.engine.session_status(sid)["interview"]
         duration = (time.time() - start) * 1000
-        return ResponseWrapper.success({"session_id": sid}, duration)
+        return ResponseWrapper.success({"session_id": sid, "interview": interview}, duration)
     except Exception as e:
         return ResponseWrapper.error(str(e), "SESSION_RESUME_ERROR", 500)
 
@@ -236,6 +237,51 @@ async def session_list(request: Request, project_id: str | None = None) -> Dict[
         return ResponseWrapper.success({"sessions": sessions}, duration)
     except Exception as e:
         return ResponseWrapper.error(str(e), "SESSION_LIST_ERROR", 500)
+
+
+# ============================================================================
+# Interview
+# ============================================================================
+
+@app.post("/interview_question")
+async def interview_question(request: Request) -> Dict[str, Any]:
+    """Register an interview question (opens the interview; one open at a time)."""
+    start = time.time()
+    try:
+        body = await request.json()
+        result = request.app.state.engine.interview_question(
+            body["session_id"], body["question"])
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
+    except Exception as e:
+        return ResponseWrapper.error(str(e), "INTERVIEW_QUESTION_ERROR", 500)
+
+
+@app.post("/interview_answer")
+async def interview_answer(request: Request) -> Dict[str, Any]:
+    """Record (or revise) the user's answer to an interview question."""
+    start = time.time()
+    try:
+        body = await request.json()
+        result = request.app.state.engine.interview_answer(
+            body["question_id"], body["answer"])
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
+    except Exception as e:
+        return ResponseWrapper.error(str(e), "INTERVIEW_ANSWER_ERROR", 500)
+
+
+@app.post("/interview_complete")
+async def interview_complete(request: Request) -> Dict[str, Any]:
+    """Declare the interview complete; unblocks step_add."""
+    start = time.time()
+    try:
+        body = await request.json()
+        result = request.app.state.engine.interview_complete(body["session_id"])
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
+    except Exception as e:
+        return ResponseWrapper.error(str(e), "INTERVIEW_COMPLETE_ERROR", 500)
 
 
 # ============================================================================
