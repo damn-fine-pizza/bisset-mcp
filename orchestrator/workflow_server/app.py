@@ -256,6 +256,46 @@ async def step_current(request: Request, session_id: str) -> Dict[str, Any]:
         return ResponseWrapper.error(str(e), "STEP_CURRENT_ERROR", 500)
 
 
+@app.post("/step_set_feature")
+async def step_set_feature(request: Request) -> Dict[str, Any]:
+    """Validate and persist a Gherkin feature for a step (disk = truth)."""
+    start = time.time()
+    try:
+        body = await request.json()
+        result = request.app.state.engine.set_feature(
+            body["step_id"], body["session_id"], body["content"],
+            filename=body.get("filename"),
+        )
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
+    except Exception as e:
+        return ResponseWrapper.error(str(e), "STEP_SET_FEATURE_ERROR", 500)
+
+
+@app.get("/step_get_feature")
+async def step_get_feature(request: Request, step_id: str, session_id: str) -> Dict[str, Any]:
+    """Read a step's feature from disk, reporting drift and missing file."""
+    start = time.time()
+    try:
+        result = request.app.state.engine.get_feature(step_id, session_id)
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
+    except Exception as e:
+        return ResponseWrapper.error(str(e), "STEP_GET_FEATURE_ERROR", 500)
+
+
+@app.get("/step_validate_feature")
+async def step_validate_feature(request: Request, step_id: str, session_id: str) -> Dict[str, Any]:
+    """Dry-run validation: Gherkin syntax + step definitions."""
+    start = time.time()
+    try:
+        result = request.app.state.engine.validate_feature(step_id, session_id)
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
+    except Exception as e:
+        return ResponseWrapper.error(str(e), "STEP_VALIDATE_FEATURE_ERROR", 500)
+
+
 @app.post("/step_run_tests")
 async def step_run_tests(request: Request) -> Dict[str, Any]:
     """Execute tests for a step via the configured adapter."""
@@ -264,13 +304,14 @@ async def step_run_tests(request: Request) -> Dict[str, Any]:
         body = await request.json()
         step_id = body["step_id"]
         session_id = body["session_id"]
-        result = request.app.state.engine.run_tests(step_id, session_id)
+        result, drifted = request.app.state.engine.run_tests(step_id, session_id)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success({
             "passed": result.passed,
             "failed": result.failed,
             "coverage": result.coverage,
             "errors": result.errors,
+            "feature_drifted": drifted,
         }, duration)
     except Exception as e:
         return ResponseWrapper.error(str(e), "STEP_RUN_TESTS_ERROR", 500)

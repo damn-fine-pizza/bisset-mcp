@@ -74,9 +74,26 @@ the rules of each session or step.
 
 | Adapter   | Runner invocation                  | Counts                    | Coverage |
 |-----------|------------------------------------|---------------------------|----------|
-| `behave`  | `behave --format json <feature>`   | scenarios passed/failed   | scenario % |
+| `behave`  | `behave --format json --no-snippets <feature>`   | scenarios passed/failed   | scenario % |
 | `pytest`  | `pytest <path>`                    | tests passed/failed       | always 0 |
 | `generic` | any command, exit code only        | 1 pass or 1 fail          | always 0 |
+
+Recommended `test_args` for behave projects: `--format json --no-snippets`.
+With snippets enabled, behave corrupts its own JSON output when undefined
+steps are present (verified on behave 1.3.3) and the adapter degrades to
+exit-code-only parsing.
+
+## Gherkin tools
+
+| Tool | What it does |
+|------|--------------|
+| `step_set_feature` | Agent submits Gherkin; Bisset validates the structure, writes the file into `features_dir`, registers content + SHA-256 |
+| `step_get_feature` | Reads the feature from disk (truth); reports `feature_drifted` / `file_missing` and realigns the registry |
+| `step_validate_feature` | behave dry-run: `syntax_ok` and `steps_defined` as separate verdicts plus `undefined_steps[]` |
+
+Drift policy: the human owns the spec. Manual edits never block execution;
+they are detected (hash mismatch), reported in tool responses, logged as
+`feature_drift` events (feature submissions are logged as `feature_set`), and the DB copy realigns to disk.
 
 All adapter output is stripped of ANSI escape codes before being stored or
 returned, so the model receives clean, structured feedback.

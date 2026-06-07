@@ -99,3 +99,75 @@ def test_add_event(db):
     assert len(events) == 1
     assert events[0]["event_type"] == "step_started"
     assert events[0]["step_id"] == step_id
+
+
+def test_step_feature_content_and_hash_roundtrip():
+    db = Storage(db_path=":memory:")
+    pid = db.create_project(name="p", path="/tmp/p")
+    db.lock_project(pid)
+    sid = db.create_session("new_feature")
+    step_id = db.add_step(sid, "S1", "d", 1)
+    db.update_step(step_id, feature_content="Feature: X\n", feature_hash="abc123")
+    step = db.get_step(step_id)
+    assert step["feature_content"] == "Feature: X\n"
+    assert step["feature_hash"] == "abc123"
+    db.close()
+
+
+def test_reopen_v2_database_is_noop(tmp_path):
+    """Reopening an up-to-date DB must not re-run migrations."""
+    db_file = str(tmp_path / "v2.db")
+    db = Storage(db_path=db_file)
+    cols_before = [r[1] for r in db.conn.execute("PRAGMA table_info(steps)").fetchall()]
+    db.close()
+    db2 = Storage(db_path=db_file)
+    cols_after = [r[1] for r in db2.conn.execute("PRAGMA table_info(steps)").fetchall()]
+    ver = db2.conn.execute("SELECT version FROM schema_version").fetchone()[0]
+    db2.close()
+    assert cols_after == cols_before
+    assert ver == 2
+
+
+def test_migration_v1_to_v2_adds_feature_columns(tmp_path):
+    """A v1 database opened by the new Storage gains the new columns."""
+    import sqlite3
+    db_file = str(tmp_path / "old.db")
+    conn = sqlite3.connect(db_file)
+    conn.executescript("""
+        CREATE TABLE schema_version (version INTEGER NOT NULL);
+        INSERT INTO schema_version (version) VALUES (1);
+        CREATE TABLE projects (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
+            test_runner TEXT NOT NULL DEFAULT 'generic', test_args TEXT NOT NULL DEFAULT '',
+            adapter TEXT NOT NULL DEFAULT 'generic', features_dir TEXT NOT NULL DEFAULT 'features/',
+            created_at REAL NOT NULL);
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+            workflow_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+            default_rules TEXT, created_at REAL NOT NULL);
+        CREATE TABLE steps (
+            id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
+            title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+            "order" INTEGER NOT NULL, feature_path TEXT,
+            gate TEXT NOT NULL DEFAULT 'tests_only', depends_on TEXT, rules_override TEXT,
+            status TEXT NOT NULL DEFAULT 'pending', retries INTEGER NOT NULL DEFAULT 0,
+            current_coverage REAL NOT NULL DEFAULT 0.0, gate_result TEXT, created_at REAL NOT NULL);
+        CREATE TABLE test_runs (
+            id TEXT PRIMARY KEY, step_id TEXT NOT NULL REFERENCES steps(id),
+            session_id TEXT NOT NULL REFERENCES sessions(id), run_at REAL NOT NULL,
+            passed INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
+            coverage REAL NOT NULL DEFAULT 0.0, runner_output TEXT NOT NULL DEFAULT '');
+        CREATE TABLE events (
+            id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
+            event_type TEXT NOT NULL, step_id TEXT, data TEXT, timestamp REAL NOT NULL);
+    """)
+    conn.commit()
+    conn.close()
+
+    db = Storage(db_path=db_file)
+    cols = [r[1] for r in db.conn.execute("PRAGMA table_info(steps)").fetchall()]
+    assert "feature_content" in cols
+    assert "feature_hash" in cols
+    ver = db.conn.execute("SELECT version FROM schema_version").fetchone()[0]
+    assert ver == 2
+    db.close()

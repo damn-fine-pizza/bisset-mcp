@@ -39,3 +39,17 @@ def test_build_url_with_query_params():
     url, remaining = _build_url("session_status", {"session_id": "abc123"})
     assert url == "/session_status"
     assert remaining == {"session_id": "abc123"}
+
+
+def test_gherkin_tools_routing():
+    from orchestrator.mcp_server.client import _GET_TOOLS
+    # reads go through GET, the write goes through POST
+    assert "step_get_feature" in _GET_TOOLS
+    assert "step_validate_feature" in _GET_TOOLS
+    assert "step_set_feature" not in _GET_TOOLS
+
+
+def test_gherkin_tools_exposed():
+    from orchestrator.mcp_server.server import BissetMCPServer
+    tools = {t["name"] for t in BissetMCPServer()._build_tools()}
+    assert {"step_set_feature", "step_get_feature", "step_validate_feature"} <= tools

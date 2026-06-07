@@ -1,11 +1,15 @@
 """Bisset v2 Workflow Engine — orchestration with rule evaluation and gate logic."""
+import hashlib
 import json
+import os
+import re
 import subprocess
 from typing import Optional
 
 from .storage import Storage
 from .rules import RuleEngine, Action
-from .adapters import get_adapter, AdapterResult
+from .adapters import get_adapter, AdapterResult, strip_ansi
+from .gherkin import derive_filename, sanitize_filename, check_syntax
 
 # Sane defaults applied when neither the step nor the session define rules.
 # Coverage is intentionally absent: only the behave adapter reports a real
@@ -98,6 +102,154 @@ class WorkflowEngine:
         """Get the current active or next pending step."""
         return self.db.get_current_step(session_id)
 
+    # -- Gherkin ------------------------------------------------------------------
+
+    def _feature_paths(self, step: dict, project: dict) -> tuple[str, str]:
+        """Return (rel_path, abs_path) for a step's feature file."""
+        rel = step["feature_path"]
+        return rel, os.path.join(project["path"], rel)
+
+    def set_feature(self, step_id: str, session_id: str, content: str,
+                    filename: str | None = None) -> dict:
+        """Validate, write to disk (disk = truth) and register content + hash."""
+        step = self.db.get_step(step_id)
+        if not step:
+            raise ValueError(f"Step not found: {step_id}")
+        errors = check_syntax(content)
+        if errors:
+            return {"written": False, "errors": errors}
+
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        project = self.db.get_project(session["project_id"])
+        if not project:
+            raise ValueError(f"Project not found: {session['project_id']}")
+        name = sanitize_filename(filename) if filename else derive_filename(step["title"])
+        features_dir = project.get("features_dir", "features/").strip("/") or "features"
+        rel_path = f"{features_dir}/{name}"
+        abs_path = os.path.join(project["path"], rel_path)
+
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        with open(abs_path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        self.db.update_step(step_id, feature_path=rel_path,
+                            feature_content=content, feature_hash=digest)
+        self.db.add_event(session_id, "feature_set", step_id=step_id,
+                          data={"feature_path": rel_path, "hash": digest})
+        return {"written": True, "feature_path": rel_path,
+                "hash": digest, "errors": []}
+
+    def _detect_drift(self, step: dict, session_id: str, abs_path: str) -> tuple[str, bool]:
+        """Read disk content and realign the DB copy if it drifted.
+
+        Returns (disk_content, drifted). Caller must ensure the file exists.
+        """
+        try:
+            with open(abs_path, "r", encoding="utf-8") as fh:
+                disk_content = fh.read()
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Feature file is not valid UTF-8: {abs_path}") from exc
+        disk_hash = hashlib.sha256(disk_content.encode("utf-8")).hexdigest()
+        drifted = bool(step.get("feature_hash")) and disk_hash != step["feature_hash"]
+        if drifted:
+            self.db.update_step(step["id"], feature_content=disk_content,
+                                feature_hash=disk_hash)
+            self.db.add_event(session_id, "feature_drift", step_id=step["id"],
+                              data={"feature_path": step["feature_path"],
+                                    "new_hash": disk_hash})
+        return disk_content, drifted
+
+    def get_feature(self, step_id: str, session_id: str) -> dict:
+        """Read the step's feature from disk (truth), reporting drift/missing."""
+        step = self.db.get_step(step_id)
+        if not step:
+            raise ValueError(f"Step not found: {step_id}")
+        if not step.get("feature_path"):
+            raise ValueError(f"Step has no feature_path: {step_id}")
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        project = self.db.get_project(session["project_id"])
+        if not project:
+            raise ValueError(f"Project not found: {session['project_id']}")
+        rel_path, abs_path = self._feature_paths(step, project)
+
+        if not os.path.isfile(abs_path):
+            return {"content": step.get("feature_content"),
+                    "feature_path": rel_path,
+                    "feature_drifted": False, "file_missing": True}
+
+        content, drifted = self._detect_drift(step, session_id, abs_path)
+        return {"content": content, "feature_path": rel_path,
+                "feature_drifted": drifted, "file_missing": False}
+
+    # -- Gherkin Validation -----------------------------------------------------
+
+    _UNDEFINED_COUNT_RE = re.compile(r"(\d+)\s+undefined")
+    _SNIPPET_STEP_RE = re.compile(r"@(?:given|when|then|step)\(u?['\"](.+?)['\"]\)")
+
+    def validate_feature(self, step_id: str, session_id: str) -> dict:
+        """Dry-run validation: syntax + step definitions, without executing.
+
+        Verified against behave 1.3.3: snippets corrupt --format json output,
+        so the JSON pass runs with --no-snippets and exact undefined step
+        names come from a second plain dry-run's snippet block.
+        """
+        step = self.db.get_step(step_id)
+        if not step:
+            raise ValueError(f"Step not found: {step_id}")
+        if not step.get("feature_path"):
+            raise ValueError(f"Step has no feature_path: {step_id}")
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        project = self.db.get_project(session["project_id"])
+        if not project:
+            raise ValueError(f"Project not found: {session['project_id']}")
+        if project.get("adapter") != "behave":
+            raise ValueError("step_validate_feature requires the behave adapter")
+
+        runner = project["test_runner"]
+        cmd = [runner, "--dry-run", "--no-snippets", "--format", "json",
+               step["feature_path"]]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  timeout=60, cwd=project["path"])
+        except FileNotFoundError:
+            raise ValueError(f"behave runner not found: {runner}")
+
+        output = strip_ansi(proc.stdout + proc.stderr)
+
+        try:
+            start = proc.stdout.index('[')
+            end = proc.stdout.rindex(']')
+            json.loads(proc.stdout[start:end + 1])
+        except (ValueError, json.JSONDecodeError):
+            return {"syntax_ok": False, "steps_defined": False,
+                    "undefined_steps": [], "errors": [output]}
+
+        matches = self._UNDEFINED_COUNT_RE.findall(output)
+        undefined_count = int(matches[-1]) if matches else 0
+        undefined_steps: list[str] = []
+        if undefined_count:
+            try:
+                proc2 = subprocess.run([runner, "--dry-run", step["feature_path"]],
+                                       capture_output=True, text=True,
+                                       timeout=60, cwd=project["path"])
+                snippet_out = strip_ansi(proc2.stdout + proc2.stderr)
+                undefined_steps = list(dict.fromkeys(
+                    self._SNIPPET_STEP_RE.findall(snippet_out)))
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                undefined_steps = []  # count is still reported; names are best-effort
+
+        return {"syntax_ok": True,
+                "steps_defined": undefined_count == 0,
+                "undefined_steps": undefined_steps,
+                "errors": []}
+
     # -- Test Execution ---------------------------------------------------------
 
     def record_test_run(self, step_id: str, session_id: str,
@@ -108,14 +260,23 @@ class WorkflowEngine:
         self.db.update_step(step_id, current_coverage=coverage)
         return run_id
 
-    def run_tests(self, step_id: str, session_id: str) -> AdapterResult:
-        """Execute tests for a step via subprocess."""
+    def run_tests(self, step_id: str, session_id: str) -> tuple[AdapterResult, bool]:
+        """Execute tests for a step via subprocess.
+
+        Returns (result, feature_drifted). Disk is truth: a drifted feature
+        still runs, but the drift is recorded and reported.
+        """
         step = self.db.get_step(step_id)
         if not step or not step.get("feature_path"):
-            return AdapterResult(passed=0, failed=0)
+            return AdapterResult(passed=0, failed=0), False
 
         session = self.db.get_session(session_id)
         project = self.db.get_project(session["project_id"])
+
+        drifted = False
+        _, abs_path = self._feature_paths(step, project)
+        if os.path.isfile(abs_path) and step.get("feature_hash"):
+            _, drifted = self._detect_drift(step, session_id, abs_path)
 
         adapter = get_adapter(project.get("adapter", "generic"))
         cmd = [project["test_runner"]]
@@ -132,7 +293,7 @@ class WorkflowEngine:
 
         self.record_test_run(step_id, session_id, result.passed, result.failed,
                              result.coverage, result.raw_output)
-        return result
+        return result, drifted
 
     # -- Step Completion --------------------------------------------------------
 
