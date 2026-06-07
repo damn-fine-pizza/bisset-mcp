@@ -207,3 +207,64 @@ def test_interview_lifecycle(client):
     r = client.get(f"/event_log?session_id={sid}")
     types = {e["event_type"] for e in _payload(r)["events"]}
     assert {"question_asked", "answer_recorded", "interview_completed"} <= types
+
+
+def test_analysis_lifecycle(client, tmp_path):
+    """submit -> gate blocks step_add -> resume reports proposal -> revise
+    -> approve -> steps + feature on disk -> step_add ok -> audit trail."""
+    r = client.post("/project_create", json={
+        "name": "analysis-e2e", "path": str(tmp_path), "adapter": "behave",
+    })
+    pid = _payload(r)["project_id"]
+    r = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "generate_tests",
+    })
+    sid = _payload(r)["session_id"]
+
+    draft = ("Feature: Health\n"
+             "  Scenario: Service is up\n"
+             "    Given the API is running\n"
+             "    When I GET /health\n"
+             "    Then I receive 200\n")
+
+    # 1. Claude submits the analyzed pipeline as a proposal
+    r = client.post("/analysis_submit", json={"session_id": sid, "steps": [
+        {"title": "Cover health", "feature_draft": draft},
+        {"title": "Cover orders", "description": "order flows"},
+    ]})
+    assert _payload(r)["submitted"] is True
+
+    # 2. The gate blocks manual step_add while the proposal is open
+    r = client.post("/step_add", json={"session_id": sid, "title": "S1", "order": 1})
+    assert r.json()["is_error"] is True
+    assert "analysis_approve" in _payload(r)["error"]
+
+    # 3. Resume mid-proposal: the analysis block comes back
+    r = client.post("/session_resume", json={"project_id": pid})
+    body = _payload(r)
+    assert body["session_id"] == sid
+    assert body["analysis"]["status"] == "open"
+    assert body["analysis"]["steps_proposed"] == 2
+
+    # 4. Revision: re-submitting replaces the whole list
+    r = client.post("/analysis_submit", json={"session_id": sid, "steps": [
+        {"title": "Cover health", "feature_draft": draft},
+    ]})
+    assert _payload(r)["revised"] is True
+
+    # 5. Approval materializes: real step + feature file on disk
+    r = client.post("/analysis_approve", json={"session_id": sid})
+    body = _payload(r)
+    assert body["steps_created"] == 1
+    assert body["features_written"] == 1
+    assert (tmp_path / "features" / "01-cover-health.feature").read_text() == draft
+
+    # 6. Gate open again
+    r = client.post("/step_add", json={"session_id": sid, "title": "Manual", "order": 99})
+    assert r.json()["is_error"] is False
+
+    # 7. Full audit trail
+    r = client.get(f"/event_log?session_id={sid}")
+    types = {e["event_type"] for e in _payload(r)["events"]}
+    assert {"analysis_submitted", "analysis_revised", "analysis_approved",
+            "step_added", "feature_set"} <= types

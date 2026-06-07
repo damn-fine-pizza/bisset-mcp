@@ -353,3 +353,108 @@ def test_set_interview_status(db):
     assert db.get_session(sid)["interview_status"] == "open"
     db.set_interview_status(sid, "complete")
     assert db.get_session(sid)["interview_status"] == "complete"
+
+
+def _build_v3_db(db_file):
+    """A handmade v3 database (v2 schema + interview state + version 3)."""
+    import sqlite3
+    _build_v2_db(db_file)
+    conn = sqlite3.connect(db_file)
+    conn.executescript("""
+        ALTER TABLE sessions ADD COLUMN interview_status TEXT;
+        CREATE TABLE interview_questions (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            "order" INTEGER NOT NULL,
+            question TEXT NOT NULL,
+            answer TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            asked_at REAL NOT NULL,
+            answered_at REAL
+        );
+        DELETE FROM schema_version;
+        INSERT INTO schema_version (version) VALUES (3);
+    """)
+    conn.commit()
+    conn.close()
+
+
+def test_migration_v3_to_v4_adds_analysis_state(tmp_path):
+    from orchestrator.workflow_server.storage import SCHEMA_VERSION
+    db_file = str(tmp_path / "v3.db")
+    _build_v3_db(db_file)
+    db = Storage(db_path=db_file)
+    cols = [r[1] for r in db.conn.execute("PRAGMA table_info(sessions)").fetchall()]
+    assert "analysis_status" in cols
+    tables = {r[0] for r in db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert "proposal_steps" in tables
+    ver = db.conn.execute("SELECT version FROM schema_version").fetchone()[0]
+    assert ver == SCHEMA_VERSION
+    db.close()
+
+
+def test_fresh_db_has_analysis_state():
+    """A fresh DB walks the ladder up to v4: column + table present."""
+    db = Storage(db_path=":memory:")
+    cols = [r[1] for r in db.conn.execute("PRAGMA table_info(sessions)").fetchall()]
+    assert "analysis_status" in cols
+    tables = {r[0] for r in db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert "proposal_steps" in tables
+    db.close()
+
+
+def test_set_analysis_status(db):
+    pid = db.create_project("legacy", "/tmp/as-app", "pytest", "", "pytest", "features/")
+    db.lock_project(pid)
+    sid = db.create_session("generate_tests")
+    assert db.get_session(sid)["analysis_status"] is None
+    db.set_analysis_status(sid, "open")
+    assert db.get_session(sid)["analysis_status"] == "open"
+    db.set_analysis_status(sid, "approved")
+    assert db.get_session(sid)["analysis_status"] == "approved"
+
+
+def test_replace_proposal_steps_roundtrip(db):
+    pid = db.create_project("legacy", "/tmp/ps-app", "pytest", "", "pytest", "features/")
+    db.lock_project(pid)
+    sid = db.create_session("generate_tests")
+    ids = db.replace_proposal_steps(sid, [
+        {"title": "Cover /health", "description": "health checks",
+         "feature_draft": "Feature: h"},
+        {"title": "Cover /orders"},
+    ])
+    rows = db.list_proposal_steps(sid)
+    assert [r["order"] for r in rows] == [1, 2]
+    assert [r["id"] for r in rows] == ids
+    assert rows[0]["feature_draft"] == "Feature: h"
+    assert rows[0]["created_at"] is not None
+    assert rows[1]["feature_draft"] is None
+    assert rows[1]["description"] == ""
+
+
+def test_replace_proposal_steps_overwrites(db):
+    pid = db.create_project("legacy", "/tmp/ps-ow", "pytest", "", "pytest", "features/")
+    db.lock_project(pid)
+    sid = db.create_session("generate_tests")
+    db.replace_proposal_steps(sid, [{"title": "A"}, {"title": "B"}, {"title": "C"}])
+    db.replace_proposal_steps(sid, [{"title": "Solo"}])
+    rows = db.list_proposal_steps(sid)
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Solo"
+    assert rows[0]["order"] == 1
+
+
+def test_proposal_steps_per_session_isolation(db):
+    pid = db.create_project("legacy", "/tmp/ps-iso", "pytest", "", "pytest", "features/")
+    db.lock_project(pid)
+    sid1 = db.create_session("generate_tests")
+    sid2 = db.create_session("new_feature")
+    db.replace_proposal_steps(sid1, [{"title": "S1-A"}, {"title": "S1-B"}])
+    db.replace_proposal_steps(sid2, [{"title": "S2-A"}])
+    assert [r["title"] for r in db.list_proposal_steps(sid1)] == ["S1-A", "S1-B"]
+    assert [r["title"] for r in db.list_proposal_steps(sid2)] == ["S2-A"]
+    db.replace_proposal_steps(sid2, [])
+    assert db.list_proposal_steps(sid2) == []
+    assert len(db.list_proposal_steps(sid1)) == 2

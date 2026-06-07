@@ -208,9 +208,13 @@ async def session_resume(request: Request) -> Dict[str, Any]:
         body = await request.json()
         project_id = body["project_id"]
         sid = request.app.state.engine.resume_session(project_id)
-        interview = request.app.state.engine.session_status(sid)["interview"]
+        status = request.app.state.engine.session_status(sid)
         duration = (time.time() - start) * 1000
-        return ResponseWrapper.success({"session_id": sid, "interview": interview}, duration)
+        return ResponseWrapper.success({
+            "session_id": sid,
+            "interview": status["interview"],
+            "analysis": status["analysis"],
+        }, duration)
     except Exception as e:
         return ResponseWrapper.error(str(e), "SESSION_RESUME_ERROR", 500)
 
@@ -282,6 +286,62 @@ async def interview_complete(request: Request) -> Dict[str, Any]:
         return ResponseWrapper.success(result, duration)
     except Exception as e:
         return ResponseWrapper.error(str(e), "INTERVIEW_COMPLETE_ERROR", 500)
+
+
+# ============================================================================
+# Analysis
+# ============================================================================
+
+@app.post("/analysis_submit")
+async def analysis_submit(request: Request) -> Dict[str, Any]:
+    """Open (or replace) the analysis proposal: step list + Gherkin drafts."""
+    start = time.time()
+    try:
+        body = await request.json()
+        result = request.app.state.engine.analysis_submit(
+            body["session_id"], body["steps"])
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
+    except Exception as e:
+        return ResponseWrapper.error(str(e), "ANALYSIS_SUBMIT_ERROR", 500)
+
+
+@app.get("/analysis_view")
+async def analysis_view(request: Request, session_id: str) -> Dict[str, Any]:
+    """Read the session's analysis proposal (status + proposed steps)."""
+    start = time.time()
+    try:
+        result = request.app.state.engine.analysis_view(session_id)
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
+    except Exception as e:
+        return ResponseWrapper.error(str(e), "ANALYSIS_VIEW_ERROR", 500)
+
+
+@app.post("/analysis_approve")
+async def analysis_approve(request: Request) -> Dict[str, Any]:
+    """Materialize the open proposal into real steps + feature files."""
+    start = time.time()
+    try:
+        body = await request.json()
+        result = request.app.state.engine.analysis_approve(body["session_id"])
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
+    except Exception as e:
+        return ResponseWrapper.error(str(e), "ANALYSIS_APPROVE_ERROR", 500)
+
+
+@app.post("/analysis_discard")
+async def analysis_discard(request: Request) -> Dict[str, Any]:
+    """Discard the open proposal; unblocks manual step_add."""
+    start = time.time()
+    try:
+        body = await request.json()
+        result = request.app.state.engine.analysis_discard(body["session_id"])
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
+    except Exception as e:
+        return ResponseWrapper.error(str(e), "ANALYSIS_DISCARD_ERROR", 500)
 
 
 # ============================================================================

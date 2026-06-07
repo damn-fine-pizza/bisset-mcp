@@ -598,3 +598,237 @@ def test_session_status_interview_block(engine):
     block = engine.session_status(sid)["interview"]
     assert block["status"] == "complete"
     assert block["pending_question"] is None
+
+
+# -- Analysis -----------------------------------------------------------------
+
+def test_analysis_submit_opens_proposal(engine):
+    pid = engine.create_project("legacy", "/tmp/an-app")
+    sid = engine.start_session(pid, "generate_tests")
+    r = engine.analysis_submit(sid, [
+        {"title": "Cover health", "description": "d", "feature_draft": VALID_FEATURE},
+        {"title": "Cover orders"},
+    ])
+    assert r["submitted"] is True
+    assert r["analysis_status"] == "open"
+    assert r["steps_proposed"] == 2
+    assert r["features_drafted"] == 1
+    assert r["revised"] is False
+    assert engine.db.get_session(sid)["analysis_status"] == "open"
+    rows = engine.db.list_proposal_steps(sid)
+    assert [row["title"] for row in rows] == ["Cover health", "Cover orders"]
+    events = engine.db.list_events(sid)
+    submitted = [e for e in events if e["event_type"] == "analysis_submitted"]
+    assert submitted and submitted[0]["data"]["steps_proposed"] == 2
+
+
+def test_analysis_submit_rejects_empty_list_and_titles(engine):
+    pid = engine.create_project("legacy", "/tmp/an-empty")
+    sid = engine.start_session(pid, "generate_tests")
+    with pytest.raises(ValueError, match="at least one step"):
+        engine.analysis_submit(sid, [])
+    with pytest.raises(ValueError, match="empty title"):
+        engine.analysis_submit(sid, [{"title": "  "}])
+    assert engine.db.get_session(sid)["analysis_status"] is None
+    assert engine.db.list_proposal_steps(sid) == []
+
+
+def test_analysis_submit_rejects_bad_gherkin_without_writing(engine):
+    pid = engine.create_project("legacy", "/tmp/an-bad")
+    sid = engine.start_session(pid, "generate_tests")
+    r = engine.analysis_submit(sid, [
+        {"title": "Good", "feature_draft": VALID_FEATURE},
+        {"title": "Bad", "feature_draft": "this is not gherkin at all"},
+    ])
+    assert r["submitted"] is False
+    assert r["errors"][0]["order"] == 2
+    assert r["errors"][0]["title"] == "Bad"
+    assert r["errors"][0]["errors"]  # check_syntax findings
+    assert engine.db.get_session(sid)["analysis_status"] is None
+    assert engine.db.list_proposal_steps(sid) == []
+
+
+def test_analysis_resubmit_open_revises(engine):
+    pid = engine.create_project("legacy", "/tmp/an-rev")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A1"}, {"title": "A2"}, {"title": "A3"}])
+    r2 = engine.analysis_submit(sid, [{"title": "B1"}, {"title": "B2"}])
+    assert r2["revised"] is True
+    assert [row["title"] for row in engine.db.list_proposal_steps(sid)] == ["B1", "B2"]
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "analysis_revised" for e in events)
+
+
+def test_analysis_resubmit_after_terminal_reopens(engine):
+    pid = engine.create_project("legacy", "/tmp/an-reopen")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A"}])
+    engine.db.set_analysis_status(sid, "discarded")
+    r = engine.analysis_submit(sid, [{"title": "Fresh"}])
+    assert r["revised"] is False
+    assert engine.db.get_session(sid)["analysis_status"] == "open"
+    submitted = [e for e in engine.db.list_events(sid)
+                 if e["event_type"] == "analysis_submitted"]
+    assert any(e["data"] and e["data"].get("previous_status") == "discarded"
+               for e in submitted)
+
+
+def test_analysis_submit_unknown_session(engine):
+    with pytest.raises(ValueError, match="Session not found"):
+        engine.analysis_submit("nope", [{"title": "X"}])
+
+
+def test_analysis_view(engine):
+    pid = engine.create_project("legacy", "/tmp/an-view")
+    sid = engine.start_session(pid, "generate_tests")
+    assert engine.analysis_view(sid) == {"analysis_status": None, "steps": []}
+    engine.analysis_submit(sid, [{"title": "A", "feature_draft": VALID_FEATURE}])
+    v = engine.analysis_view(sid)
+    assert v["analysis_status"] == "open"
+    assert v["steps"][0]["order"] == 1
+    assert v["steps"][0]["title"] == "A"
+    assert v["steps"][0]["feature_draft"] == VALID_FEATURE
+    with pytest.raises(ValueError, match="Session not found"):
+        engine.analysis_view("nope")
+
+
+def test_analysis_approve_materializes(engine, tmp_path):
+    pid = engine.create_project("legacy", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [
+        {"title": "Cover health", "description": "d1", "feature_draft": VALID_FEATURE},
+        {"title": "Cover orders", "description": "d2"},
+    ])
+    r = engine.analysis_approve(sid)
+    assert r["analysis_status"] == "approved"
+    assert r["steps_created"] == 2
+    assert r["features_written"] == 1
+    assert r["steps"][0]["proposal_order"] == 1
+    assert r["steps"][0]["feature_path"] == "features/01-cover-health.feature"
+    assert r["steps"][1]["feature_path"] is None
+    steps = engine.db.list_steps(sid)
+    assert [s["title"] for s in steps] == ["Cover health", "Cover orders"]
+    assert steps[0]["feature_path"] == "features/01-cover-health.feature"
+    written = (tmp_path / "features" / "01-cover-health.feature").read_text()
+    assert written == VALID_FEATURE
+    assert engine.db.get_session(sid)["analysis_status"] == "approved"
+    types = {e["event_type"] for e in engine.db.list_events(sid)}
+    assert {"analysis_approved", "step_added", "feature_set"} <= types
+
+
+def test_analysis_approve_disambiguates_colliding_titles(engine, tmp_path):
+    """Two titles that slugify identically must produce two distinct files."""
+    pid = engine.create_project("legacy", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "generate_tests")
+    second = VALID_FEATURE.replace("Feature: Calculator", "Feature: Calculator bis")
+    engine.analysis_submit(sid, [
+        {"title": "Cover /health", "feature_draft": VALID_FEATURE},
+        {"title": "Cover health", "feature_draft": second},
+    ])
+    r = engine.analysis_approve(sid)
+    paths = [s["feature_path"] for s in r["steps"]]
+    assert len(set(paths)) == 2
+    assert (tmp_path / "features" / "01-cover-health.feature").read_text() == VALID_FEATURE
+    assert (tmp_path / "features" / "02-cover-health.feature").read_text() == second
+
+
+def test_analysis_approve_requires_open_proposal(engine):
+    pid = engine.create_project("legacy", "/tmp/an-noopen")
+    sid = engine.start_session(pid, "generate_tests")
+    with pytest.raises(ValueError, match="No open analysis proposal"):
+        engine.analysis_approve(sid)
+    engine.db.set_analysis_status(sid, "approved")
+    with pytest.raises(ValueError, match="No open analysis proposal"):
+        engine.analysis_approve(sid)
+
+
+def test_analysis_approve_blocked_by_open_interview(engine, tmp_path):
+    pid = engine.create_project("legacy", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A"}])
+    engine.interview_question(sid, "What is this project?")
+    with pytest.raises(ValueError, match="interview_complete"):
+        engine.analysis_approve(sid)
+    assert engine.db.get_session(sid)["analysis_status"] == "open"
+    assert engine.db.list_steps(sid) == []
+
+
+def test_analysis_approve_appends_after_existing_steps(engine, tmp_path):
+    pid = engine.create_project("legacy", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.add_step(sid, "Manual step", "d", 5)
+    engine.analysis_submit(sid, [{"title": "Proposed"}])
+    r = engine.analysis_approve(sid)
+    new_step = engine.db.get_step(r["steps"][0]["step_id"])
+    assert new_step["order"] == 6
+
+
+def test_analysis_discard(engine):
+    pid = engine.create_project("legacy", "/tmp/an-disc")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A"}, {"title": "B"}])
+    r = engine.analysis_discard(sid)
+    assert r == {"analysis_status": "discarded", "steps_discarded": 2}
+    assert engine.db.get_session(sid)["analysis_status"] == "discarded"
+    events = engine.db.list_events(sid)
+    discarded = [e for e in events if e["event_type"] == "analysis_discarded"]
+    assert discarded and discarded[0]["data"]["steps_discarded"] == 2
+    # rows remain readable after discard
+    assert len(engine.analysis_view(sid)["steps"]) == 2
+
+
+def test_analysis_discard_requires_open(engine):
+    pid = engine.create_project("legacy", "/tmp/an-disc2")
+    sid = engine.start_session(pid, "generate_tests")
+    with pytest.raises(ValueError, match="No open analysis proposal"):
+        engine.analysis_discard(sid)
+
+
+def test_add_step_gated_by_open_proposal(engine):
+    pid = engine.create_project("legacy", "/tmp/an-gate")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A"}])
+    with pytest.raises(ValueError, match="analysis_approve"):
+        engine.add_step(sid, "Manual", "d", 1)
+    # a terminal state unblocks
+    engine.analysis_discard(sid)
+    step_id = engine.add_step(sid, "Manual", "d", 1)
+    assert engine.db.get_step(step_id) is not None
+
+
+def test_add_step_gate_checks_interview_first(engine):
+    """Both gates open: the interview error wins (fixed check order)."""
+    pid = engine.create_project("legacy", "/tmp/an-order")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A"}])
+    engine.interview_question(sid, "Pending question?")
+    with pytest.raises(ValueError, match="Interview in progress"):
+        engine.add_step(sid, "Manual", "d", 1)
+
+
+def test_session_status_analysis_block(engine):
+    pid = engine.create_project("legacy", "/tmp/an-block")
+    sid = engine.start_session(pid, "generate_tests")
+    assert engine.session_status(sid)["analysis"] is None
+    engine.analysis_submit(sid, [
+        {"title": "A", "feature_draft": VALID_FEATURE}, {"title": "B"},
+    ])
+    block = engine.session_status(sid)["analysis"]
+    assert block["status"] == "open"
+    assert block["steps_proposed"] == 2
+    assert block["features_drafted"] == 1
+    assert block["steps"][0] == {"order": 1, "title": "A", "has_draft": True}
+
+
+def test_analysis_reapprove_after_resubmit_writes_distinct_files(engine, tmp_path):
+    """approve -> re-submit -> approve must not overwrite the first batch's files."""
+    pid = engine.create_project("legacy", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "Cover health", "feature_draft": VALID_FEATURE}])
+    engine.analysis_approve(sid)
+    second = VALID_FEATURE.replace("Feature: Calculator", "Feature: Calculator v2")
+    engine.analysis_submit(sid, [{"title": "Cover health", "feature_draft": second}])
+    r = engine.analysis_approve(sid)
+    assert r["steps"][0]["feature_path"] == "features/02-cover-health.feature"
+    assert (tmp_path / "features" / "01-cover-health.feature").read_text() == VALID_FEATURE
+    assert (tmp_path / "features" / "02-cover-health.feature").read_text() == second

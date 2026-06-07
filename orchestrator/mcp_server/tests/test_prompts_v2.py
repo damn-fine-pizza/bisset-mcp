@@ -58,3 +58,13 @@ def test_interviewer_prompt_mentions_interview_tools():
     text = reg.render("bisset/interviewer", {}, {})
     for tool in ("interview_question", "interview_answer", "interview_complete"):
         assert tool in text
+
+
+def test_analyzer_prompt_mentions_analysis_tools():
+    reg = PromptRegistry()
+    text = reg.render("bisset/analyzer", {}, {})
+    for tool in ("analysis_submit", "analysis_view",
+                 "analysis_approve", "analysis_discard"):
+        assert tool in text
+    # the prompt must forbid bypassing the proposal with manual step_add
+    assert "do NOT create steps manually with step_add" in text

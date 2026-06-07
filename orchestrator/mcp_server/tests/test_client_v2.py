@@ -67,3 +67,19 @@ def test_interview_tools_routing():
     assert "interview_question" not in _GET_TOOLS
     assert "interview_answer" not in _GET_TOOLS
     assert "interview_complete" not in _GET_TOOLS
+
+
+def test_analysis_tools_exposed():
+    from orchestrator.mcp_server.server import BissetMCPServer
+    tools = {t["name"] for t in BissetMCPServer()._build_tools()}
+    assert {"analysis_submit", "analysis_view",
+            "analysis_approve", "analysis_discard"} <= tools
+
+
+def test_analysis_tools_routing():
+    from orchestrator.mcp_server.client import _GET_TOOLS
+    # the read goes through GET, the writes through POST
+    assert "analysis_view" in _GET_TOOLS
+    assert "analysis_submit" not in _GET_TOOLS
+    assert "analysis_approve" not in _GET_TOOLS
+    assert "analysis_discard" not in _GET_TOOLS

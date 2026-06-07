@@ -86,6 +86,7 @@ class WorkflowEngine:
             "completed_steps": sum(1 for s in steps if s["status"] == "passed"),
             "failed_steps": sum(1 for s in steps if s["status"] == "failed"),
             "interview": self._interview_block(session_id, session) if session else None,
+            "analysis": self._analysis_block(session_id, session) if session else None,
         }
 
     # -- Interview ----------------------------------------------------------------
@@ -190,11 +191,168 @@ class WorkflowEngine:
                 "answered": sum(1 for q in questions if q["status"] == "answered"),
                 "pending_question": pending}
 
+    # -- Analysis -----------------------------------------------------------------
+
+    def analysis_submit(self, session_id: str, steps: list[dict]) -> dict:
+        """Open (or replace) the analysis proposal for a session.
+
+        Gherkin drafts are validated here so analysis_approve can never fail
+        on syntax. Re-submitting an open proposal replaces it (audited as
+        analysis_revised); re-submitting a terminal one opens a fresh
+        proposal and re-arms the step_add gate.
+        """
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        if not isinstance(steps, list) or not steps:
+            raise ValueError(
+                "Proposal must contain at least one step "
+                "({title, description?, feature_draft?})."
+            )
+        cleaned = []
+        errors = []
+        for idx, step in enumerate(steps, start=1):
+            title = (step.get("title") or "").strip()
+            if not title:
+                raise ValueError(f"Proposal step {idx} has an empty title.")
+            draft = step.get("feature_draft")
+            if draft is not None:
+                draft_errors = check_syntax(draft)
+                if draft_errors:
+                    errors.append({"order": idx, "title": title,
+                                   "errors": draft_errors})
+            cleaned.append({"title": title,
+                            "description": (step.get("description") or "").strip(),
+                            "feature_draft": draft})
+        if errors:
+            return {"submitted": False, "errors": errors}
+
+        previous = session.get("analysis_status")
+        self.db.replace_proposal_steps(session_id, cleaned)
+        self.db.set_analysis_status(session_id, "open")
+        drafted = sum(1 for s in cleaned if s["feature_draft"])
+        event = "analysis_revised" if previous == "open" else "analysis_submitted"
+        data = {"steps_proposed": len(cleaned), "features_drafted": drafted}
+        if previous and previous != "open":
+            data["previous_status"] = previous
+        self.db.add_event(session_id, event, data=data)
+        return {"submitted": True, "analysis_status": "open",
+                "steps_proposed": len(cleaned), "features_drafted": drafted,
+                "revised": previous == "open"}
+
+    def analysis_view(self, session_id: str) -> dict:
+        """Read the persisted proposal (status + proposed steps with drafts)."""
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        status = session.get("analysis_status")
+        if status is None:
+            return {"analysis_status": None, "steps": []}
+        steps = self.db.list_proposal_steps(session_id)
+        return {"analysis_status": status,
+                "steps": [{"order": s["order"], "title": s["title"],
+                           "description": s["description"],
+                           "feature_draft": s["feature_draft"]}
+                          for s in steps]}
+
+    def analysis_approve(self, session_id: str) -> dict:
+        """Materialize the open proposal into real steps (+ features on disk).
+
+        Non-atomic by declared design (see the design doc): the loop is
+        ordered so a partial failure leaves a consistent prefix of real
+        steps and the proposal still open.
+        """
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        status = session.get("analysis_status")
+        if status != "open":
+            raise ValueError(
+                f"No open analysis proposal (status: {status}). Submit one "
+                "via analysis_submit before approving."
+            )
+        if session.get("interview_status") == "open":
+            raise ValueError(
+                "Interview in progress: complete it via interview_complete "
+                "before approving the analysis proposal."
+            )
+        proposal = self.db.list_proposal_steps(session_id)
+        existing = self.db.list_steps(session_id)
+        next_order = max((s["order"] for s in existing), default=0) + 1
+        created = []
+        features_written = 0
+        # On partial failure the clean recovery is discard + fresh submit:
+        # re-approving would duplicate the already-materialized prefix.
+        for offset, p in enumerate(proposal):
+            order = next_order + offset
+            # storage-level add: the engine gate guards the manual tool
+            # path, not this internal promotion
+            step_id = self.db.add_step(session_id, p["title"],
+                                       p["description"], order)
+            self.db.add_event(session_id, "step_added", step_id=step_id,
+                              data={"title": p["title"], "order": order,
+                                    "source": "analysis"})
+            feature_path = None
+            if p["feature_draft"]:
+                # batch write: titles may slugify identically — prefixing
+                # with the materialized step order guarantees one file per
+                # step, across re-approvals too
+                result = self.set_feature(
+                    step_id, session_id, p["feature_draft"],
+                    filename=f"{order:02d}-{derive_filename(p['title'])}")
+                if not result["written"]:
+                    # unreachable: drafts are validated at submit time
+                    raise ValueError(
+                        f"Feature draft for proposal step {p['order']} failed "
+                        f"validation at approve time: {result['errors']}"
+                    )
+                feature_path = result["feature_path"]
+                features_written += 1
+            created.append({"proposal_order": p["order"], "step_id": step_id,
+                            "order": order, "feature_path": feature_path})
+        self.db.set_analysis_status(session_id, "approved")
+        self.db.add_event(session_id, "analysis_approved",
+                          data={"steps_created": len(created),
+                                "features_written": features_written})
+        return {"analysis_status": "approved", "steps": created,
+                "steps_created": len(created),
+                "features_written": features_written}
+
+    def analysis_discard(self, session_id: str) -> dict:
+        """Discard the open proposal; rows remain readable via analysis_view."""
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        status = session.get("analysis_status")
+        if status != "open":
+            raise ValueError(
+                f"No open analysis proposal to discard (status: {status})."
+            )
+        steps = self.db.list_proposal_steps(session_id)
+        self.db.set_analysis_status(session_id, "discarded")
+        self.db.add_event(session_id, "analysis_discarded",
+                          data={"steps_discarded": len(steps)})
+        return {"analysis_status": "discarded", "steps_discarded": len(steps)}
+
+    def _analysis_block(self, session_id: str, session: dict) -> dict | None:
+        """Analysis summary for status responses (None = never started)."""
+        status = session.get("analysis_status")
+        if status is None:
+            return None
+        steps = self.db.list_proposal_steps(session_id)
+        return {"status": status,
+                "steps_proposed": len(steps),
+                "features_drafted": sum(1 for s in steps if s["feature_draft"]),
+                "steps": [{"order": s["order"], "title": s["title"],
+                           "has_draft": bool(s["feature_draft"])}
+                          for s in steps]}
+
     # -- Step -------------------------------------------------------------------
 
     def add_step(self, session_id: str, title: str, description: str, order: int,
                  **kwargs) -> str:
-        """Add a step to a session (gated while an interview is open)."""
+        """Add a step to a session (gated while an interview or an analysis
+        proposal is open; check order: interview first, then analysis)."""
         session = self.db.get_session(session_id)
         if session and session.get("interview_status") == "open":
             open_q = self.db.get_open_interview_question(session_id)
@@ -208,6 +366,13 @@ class WorkflowEngine:
                 "Interview in progress: all questions are answered but the "
                 "interview is not declared complete. Call interview_complete "
                 "to add steps."
+            )
+        if session and session.get("analysis_status") == "open":
+            n = len(self.db.list_proposal_steps(session_id))
+            raise ValueError(
+                f"Analysis proposal pending: an open proposal with {n} "
+                "step(s) exists. Approve it with analysis_approve or discard "
+                "it with analysis_discard before adding steps manually."
             )
         step_id = self.db.add_step(session_id, title, description, order, **kwargs)
         self.db.add_event(session_id, "step_added", step_id=step_id, data={
