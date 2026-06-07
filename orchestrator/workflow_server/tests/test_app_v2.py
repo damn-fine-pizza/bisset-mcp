@@ -353,3 +353,12 @@ def test_session_resume_reports_pending_question(client):
     assert body["session_id"] == sid
     assert body["interview"]["status"] == "open"
     assert body["interview"]["pending_question"]["question"] == "Which constraints apply?"
+
+
+def test_session_resume_without_interview_has_null_block(client):
+    """The enrichment is additive: no interview -> interview is null."""
+    pid, sid = _interview_session(client, "/tmp/iv-none")
+    r = client.post("/session_resume", json={"project_id": pid})
+    body = _payload(r)
+    assert body["session_id"] == sid
+    assert body["interview"] is None

@@ -77,7 +77,7 @@ class BissetMCPServer:
                  "session_id": {"type": "string"}, "question": {"type": "string"},
              }, "required": ["session_id", "question"]}},
             {"name": "interview_answer",
-             "description": "Record the user's answer to the open interview question (re-answering revises with audit)",
+             "description": "Record the user's answer to an interview question by id (re-answering an answered one revises it, with audit)",
              "inputSchema": {"type": "object", "properties": {
                  "question_id": {"type": "string"}, "answer": {"type": "string"},
              }, "required": ["question_id", "answer"]}},
