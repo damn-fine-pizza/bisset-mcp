@@ -131,6 +131,9 @@ class WorkflowEngine:
         abs_path = os.path.join(project["path"], rel_path)
 
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        # behave refuses to run a features dir without a steps/ package;
+        # prepare it empty so validate/run give honest verdicts (issue #6)
+        os.makedirs(os.path.join(os.path.dirname(abs_path), "steps"), exist_ok=True)
         with open(abs_path, "w", encoding="utf-8") as fh:
             fh.write(content)
 
@@ -228,6 +231,13 @@ class WorkflowEngine:
             end = proc.stdout.rindex(']')
             json.loads(proc.stdout[start:end + 1])
         except (ValueError, json.JSONDecodeError):
+            # A ConfigError (e.g. missing steps/ directory) is an environment
+            # problem, not a Gherkin verdict — never report it as syntax_ok
+            # False (issue #6).
+            if "ConfigError" in output:
+                detail = next((ln for ln in output.splitlines()
+                               if "ConfigError" in ln), output.strip())
+                raise ValueError(f"behave configuration error: {detail}")
             return {"syntax_ok": False, "steps_defined": False,
                     "undefined_steps": [], "errors": [output]}
 

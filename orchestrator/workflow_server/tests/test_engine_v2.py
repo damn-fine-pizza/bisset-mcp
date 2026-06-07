@@ -383,3 +383,28 @@ def test_validate_feature_runner_missing(engine, tmp_path):
     engine.set_feature(step_id, sid, VALID_FEATURE)
     with pytest.raises(ValueError, match="behave runner not found"):
         engine.validate_feature(step_id, sid)
+
+
+def test_set_feature_creates_steps_dir(engine, tmp_path):
+    """behave refuses to run without features/steps/; set_feature prepares it."""
+    pid = engine.create_project("myapp", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Calc", "d", 1)
+    engine.set_feature(step_id, sid, VALID_FEATURE)
+    assert (tmp_path / "features" / "steps").is_dir()
+
+
+@pytest.mark.skipif(not _os.path.exists(BEHAVE), reason="behave not installed in .venv")
+def test_validate_feature_config_error_is_not_a_syntax_verdict(engine, tmp_path):
+    """A behave ConfigError (e.g. missing steps dir) must surface as an explicit
+    error, not as syntax_ok False (collaudo finding, issue #6)."""
+    import shutil
+    pid = engine.create_project("myapp", str(tmp_path), test_runner=BEHAVE,
+                                test_args="--format json --no-snippets",
+                                adapter="behave")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Calc", "d", 1)
+    engine.set_feature(step_id, sid, VALID_FEATURE)
+    shutil.rmtree(tmp_path / "features" / "steps")
+    with pytest.raises(ValueError, match="configuration"):
+        engine.validate_feature(step_id, sid)
