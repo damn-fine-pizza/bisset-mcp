@@ -689,3 +689,131 @@ def test_analysis_view(engine):
     assert v["steps"][0]["feature_draft"] == VALID_FEATURE
     with pytest.raises(ValueError, match="Session not found"):
         engine.analysis_view("nope")
+
+
+def test_analysis_approve_materializes(engine, tmp_path):
+    pid = engine.create_project("legacy", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [
+        {"title": "Cover health", "description": "d1", "feature_draft": VALID_FEATURE},
+        {"title": "Cover orders", "description": "d2"},
+    ])
+    r = engine.analysis_approve(sid)
+    assert r["analysis_status"] == "approved"
+    assert r["steps_created"] == 2
+    assert r["features_written"] == 1
+    assert r["steps"][0]["proposal_order"] == 1
+    assert r["steps"][0]["feature_path"] == "features/01-cover-health.feature"
+    assert r["steps"][1]["feature_path"] is None
+    steps = engine.db.list_steps(sid)
+    assert [s["title"] for s in steps] == ["Cover health", "Cover orders"]
+    assert steps[0]["feature_path"] == "features/01-cover-health.feature"
+    written = (tmp_path / "features" / "01-cover-health.feature").read_text()
+    assert written == VALID_FEATURE
+    assert engine.db.get_session(sid)["analysis_status"] == "approved"
+    types = {e["event_type"] for e in engine.db.list_events(sid)}
+    assert {"analysis_approved", "step_added", "feature_set"} <= types
+
+
+def test_analysis_approve_disambiguates_colliding_titles(engine, tmp_path):
+    """Two titles that slugify identically must produce two distinct files."""
+    pid = engine.create_project("legacy", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "generate_tests")
+    second = VALID_FEATURE.replace("Feature: Calculator", "Feature: Calculator bis")
+    engine.analysis_submit(sid, [
+        {"title": "Cover /health", "feature_draft": VALID_FEATURE},
+        {"title": "Cover health", "feature_draft": second},
+    ])
+    r = engine.analysis_approve(sid)
+    paths = [s["feature_path"] for s in r["steps"]]
+    assert len(set(paths)) == 2
+    assert (tmp_path / "features" / "01-cover-health.feature").read_text() == VALID_FEATURE
+    assert (tmp_path / "features" / "02-cover-health.feature").read_text() == second
+
+
+def test_analysis_approve_requires_open_proposal(engine):
+    pid = engine.create_project("legacy", "/tmp/an-noopen")
+    sid = engine.start_session(pid, "generate_tests")
+    with pytest.raises(ValueError, match="No open analysis proposal"):
+        engine.analysis_approve(sid)
+    engine.db.set_analysis_status(sid, "approved")
+    with pytest.raises(ValueError, match="No open analysis proposal"):
+        engine.analysis_approve(sid)
+
+
+def test_analysis_approve_blocked_by_open_interview(engine, tmp_path):
+    pid = engine.create_project("legacy", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A"}])
+    engine.interview_question(sid, "What is this project?")
+    with pytest.raises(ValueError, match="interview_complete"):
+        engine.analysis_approve(sid)
+    assert engine.db.get_session(sid)["analysis_status"] == "open"
+    assert engine.db.list_steps(sid) == []
+
+
+def test_analysis_approve_appends_after_existing_steps(engine, tmp_path):
+    pid = engine.create_project("legacy", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.add_step(sid, "Manual step", "d", 5)
+    engine.analysis_submit(sid, [{"title": "Proposed"}])
+    r = engine.analysis_approve(sid)
+    new_step = engine.db.get_step(r["steps"][0]["step_id"])
+    assert new_step["order"] == 6
+
+
+def test_analysis_discard(engine):
+    pid = engine.create_project("legacy", "/tmp/an-disc")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A"}, {"title": "B"}])
+    r = engine.analysis_discard(sid)
+    assert r == {"analysis_status": "discarded", "steps_discarded": 2}
+    assert engine.db.get_session(sid)["analysis_status"] == "discarded"
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "analysis_discarded" for e in events)
+    # rows remain readable after discard
+    assert len(engine.analysis_view(sid)["steps"]) == 2
+
+
+def test_analysis_discard_requires_open(engine):
+    pid = engine.create_project("legacy", "/tmp/an-disc2")
+    sid = engine.start_session(pid, "generate_tests")
+    with pytest.raises(ValueError, match="No open analysis proposal"):
+        engine.analysis_discard(sid)
+
+
+def test_add_step_gated_by_open_proposal(engine):
+    pid = engine.create_project("legacy", "/tmp/an-gate")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A"}])
+    with pytest.raises(ValueError, match="analysis_approve"):
+        engine.add_step(sid, "Manual", "d", 1)
+    # a terminal state unblocks
+    engine.analysis_discard(sid)
+    step_id = engine.add_step(sid, "Manual", "d", 1)
+    assert engine.db.get_step(step_id) is not None
+
+
+def test_add_step_gate_checks_interview_first(engine):
+    """Both gates open: the interview error wins (fixed check order)."""
+    pid = engine.create_project("legacy", "/tmp/an-order")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A"}])
+    engine.interview_question(sid, "Pending question?")
+    with pytest.raises(ValueError, match="Interview in progress"):
+        engine.add_step(sid, "Manual", "d", 1)
+
+
+def test_session_status_analysis_block(engine):
+    pid = engine.create_project("legacy", "/tmp/an-block")
+    sid = engine.start_session(pid, "generate_tests")
+    assert engine.session_status(sid)["analysis"] is None
+    engine.analysis_submit(sid, [
+        {"title": "A", "feature_draft": VALID_FEATURE}, {"title": "B"},
+    ])
+    block = engine.session_status(sid)["analysis"]
+    assert block["status"] == "open"
+    assert block["steps_proposed"] == 2
+    assert block["features_drafted"] == 1
+    assert block["steps"][0] == {"order": 1, "title": "A", "has_draft": True}
+    assert block["steps"][1] == {"order": 2, "title": "B", "has_draft": False}
