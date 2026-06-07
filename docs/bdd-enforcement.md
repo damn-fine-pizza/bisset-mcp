@@ -122,6 +122,34 @@ can pick up the thread mid-interview.
 Audit: `question_asked`, `answer_recorded`, `answer_revised`,
 `interview_completed`, `interview_reopened` events in the session log.
 
+## Analysis tools
+
+For existing codebases, the analysis outcome is Bisset state: a pipeline
+proposal (step list + Gherkin drafts) lives in the DB, freely revisable and
+audited. Claude analyzes (driven by the `bisset/analyzer` prompt); Bisset
+records. Bisset calls no LLM.
+
+| Tool | What it does |
+|------|--------------|
+| `analysis_submit` | Opens (or replaces) the proposal: steps `{title, description?, feature_draft?}`. Drafts are syntax-checked here, so approval can never fail on Gherkin. Re-submitting an open proposal revises it; re-submitting a terminal one reopens it and re-arms the gate |
+| `analysis_view` | Reads the persisted proposal (status + steps with drafts) |
+| `analysis_approve` | Materializes the proposal: real steps appended after existing ones, drafts written to disk via the `set_feature` flow with filenames prefixed by the materialized step order (no batch collisions, none across re-approvals; SHA registered). Requires no open interview |
+| `analysis_discard` | Discards the open proposal; rows remain readable |
+
+Gate: **conditional on existence**, like the interview. While a proposal is
+`open`, `step_add` is rejected with an actionable error (approve or discard
+first). Check order in `add_step`: interview first, then analysis. Approval
+is non-atomic by declared design — a partial failure leaves a consistent
+prefix of real steps and the proposal still open (recovery: discard + fresh
+submit, not re-approve).
+
+Resume: `session_status` and `session_resume` carry an `analysis` block with
+`status`, `steps_proposed` / `features_drafted` counts and the proposed step
+titles.
+
+Audit: `analysis_submitted`, `analysis_revised`, `analysis_approved`,
+`analysis_discarded` events in the session log.
+
 ## Enforcement summary
 
 | Actor | Role | Can lie? |

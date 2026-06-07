@@ -1,7 +1,7 @@
 # Analyze Codebase — Design Document
 
 **Date:** 2026-06-07
-**Status:** Approved
+**Status:** Implemented
 **Scope:** Roadmap item 1 — `analyze_codebase`: for existing projects, Claude
 analyzes the codebase and Bisset persists the proposed step list + draft
 features as reviewable pipeline state (`analysis_submit`, `analysis_view`,

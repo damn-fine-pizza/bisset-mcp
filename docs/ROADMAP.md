@@ -1,6 +1,6 @@
 # Bisset — Roadmap
 
-Updated: 2026-06-07 (interview tools delivered). Order = priority. Each item ships as its own
+Updated: 2026-06-07 (analysis tools delivered). Order = priority. Each item ships as its own
 design → plan → reviewed implementation cycle (see `docs/plans/`).
 
 ## Delivered
@@ -17,22 +17,22 @@ design → plan → reviewed implementation cycle (see `docs/plans/`).
   `interview_complete`: the requirements dialogue persisted per session,
   resumable mid-question, audited in `event_log`; conditional gate blocks
   `step_add` while an interview is open; stepwise migration ladder (schema v3)
+- **Analysis as state** — `analysis_submit` / `analysis_view` /
+  `analysis_approve` / `analysis_discard`: for existing projects, Claude's
+  codebase analysis persisted as a reviewable pipeline proposal (step list +
+  Gherkin drafts in DB); approval materializes real steps + feature files;
+  conditional gate blocks `step_add` while a proposal is open (schema v4)
 
 ## Next
 
-### 1. `analyze_codebase`
-For existing projects: Claude analyzes the codebase, Bisset persists the
-proposed step list + draft features as reviewable pipeline state
-(`generate_tests` / `new_feature` workflows depend on this).
-
-## Later
-
-### 2. Workflow phases
+### 1. Workflow phases
 Make `new_project` / `new_feature` / `generate_tests` real meta-phases
 (interview → design → generate → execute) that produce concrete steps and
 then disappear, as per the v2 design.
 
-### 3. Hardening backlog (small, opportunistic)
+## Later
+
+### 2. Hardening backlog (small, opportunistic)
 - pytest adapter coverage (currently always 0; gate on coverage is
   behave-only and opt-in)
 - storage lock semantics: `update_step`/`add_event` bypass `_require_lock`
