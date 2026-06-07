@@ -64,12 +64,28 @@ class BissetMCPServer:
                  "project_id": {"type": "string"}, "workflow_type": {"type": "string"},
                  "default_rules": {"type": "array", "items": {"type": "object", "properties": {}}},
              }, "required": ["project_id"]}},
-            {"name": "session_resume", "description": "Resume latest pausable session",
+            {"name": "session_resume", "description": "Resume latest pausable session; reports interview state and pending question if any",
              "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}}, "required": ["project_id"]}},
             {"name": "session_status", "description": "Get session status with steps and progress",
              "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
             {"name": "session_list", "description": "List sessions (cross-project ok)",
              "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}}, "required": []}},
+            # Interview
+            {"name": "interview_question",
+             "description": "Register an interview question Bisset-side before asking it (one open question at a time; reopens a completed interview)",
+             "inputSchema": {"type": "object", "properties": {
+                 "session_id": {"type": "string"}, "question": {"type": "string"},
+             }, "required": ["session_id", "question"]}},
+            {"name": "interview_answer",
+             "description": "Record the user's answer to the open interview question (re-answering revises with audit)",
+             "inputSchema": {"type": "object", "properties": {
+                 "question_id": {"type": "string"}, "answer": {"type": "string"},
+             }, "required": ["question_id", "answer"]}},
+            {"name": "interview_complete",
+             "description": "Declare the interview complete (requires no open question and at least one answer); unblocks step_add",
+             "inputSchema": {"type": "object", "properties": {
+                 "session_id": {"type": "string"},
+             }, "required": ["session_id"]}},
             # Pipeline
             {"name": "step_current", "description": "Get current active step",
              "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},
