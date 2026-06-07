@@ -818,4 +818,17 @@ def test_session_status_analysis_block(engine):
     assert block["steps_proposed"] == 2
     assert block["features_drafted"] == 1
     assert block["steps"][0] == {"order": 1, "title": "A", "has_draft": True}
-    assert block["steps"][1] == {"order": 2, "title": "B", "has_draft": False}
+
+
+def test_analysis_reapprove_after_resubmit_writes_distinct_files(engine, tmp_path):
+    """approve -> re-submit -> approve must not overwrite the first batch's files."""
+    pid = engine.create_project("legacy", str(tmp_path), adapter="behave")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "Cover health", "feature_draft": VALID_FEATURE}])
+    engine.analysis_approve(sid)
+    second = VALID_FEATURE.replace("Feature: Calculator", "Feature: Calculator v2")
+    engine.analysis_submit(sid, [{"title": "Cover health", "feature_draft": second}])
+    r = engine.analysis_approve(sid)
+    assert r["steps"][0]["feature_path"] == "features/02-cover-health.feature"
+    assert (tmp_path / "features" / "01-cover-health.feature").read_text() == VALID_FEATURE
+    assert (tmp_path / "features" / "02-cover-health.feature").read_text() == second

@@ -281,6 +281,8 @@ class WorkflowEngine:
         next_order = max((s["order"] for s in existing), default=0) + 1
         created = []
         features_written = 0
+        # On partial failure the clean recovery is discard + fresh submit:
+        # re-approving would duplicate the already-materialized prefix.
         for offset, p in enumerate(proposal):
             order = next_order + offset
             # storage-level add: the engine gate guards the manual tool
@@ -292,11 +294,12 @@ class WorkflowEngine:
                                     "source": "analysis"})
             feature_path = None
             if p["feature_draft"]:
-                # batch write: titles may slugify identically — the order
-                # prefix guarantees one file per proposed step
+                # batch write: titles may slugify identically — prefixing
+                # with the materialized step order guarantees one file per
+                # step, across re-approvals too
                 result = self.set_feature(
                     step_id, session_id, p["feature_draft"],
-                    filename=f"{p['order']:02d}-{derive_filename(p['title'])}")
+                    filename=f"{order:02d}-{derive_filename(p['title'])}")
                 if not result["written"]:
                     # unreachable: drafts are validated at submit time
                     raise ValueError(
