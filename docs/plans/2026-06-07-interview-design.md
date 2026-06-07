@@ -1,7 +1,7 @@
 # Interview Tools — Design Document
 
 **Date:** 2026-06-07
-**Status:** Approved
+**Status:** Implemented
 **Scope:** Roadmap item 1 — `interview_answer`: the requirements interview as
 Bisset state (`interview_question`, `interview_answer`, `interview_complete`).
 
