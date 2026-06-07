@@ -516,6 +516,25 @@ def test_interview_complete_rejects_zero_answers(engine):
         engine.interview_complete(sid)
 
 
+def test_interview_complete_is_idempotent(engine):
+    """A retry (e.g. from an MCP client) must not duplicate the audit event."""
+    pid = engine.create_project("myapp", "/tmp/ic9")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "Q?")["question_id"]
+    engine.interview_answer(qid, "A")
+    first = engine.interview_complete(sid)
+    second = engine.interview_complete(sid)
+    assert second == first
+    events = [e for e in engine.db.list_events(sid)
+              if e["event_type"] == "interview_completed"]
+    assert len(events) == 1
+
+
+def test_interview_complete_rejects_unknown_session(engine):
+    with pytest.raises(ValueError, match="Session not found"):
+        engine.interview_complete("nope")
+
+
 def test_interview_reopen_after_complete(engine):
     pid = engine.create_project("myapp", "/tmp/ic5")
     sid = engine.start_session(pid, "new_project")

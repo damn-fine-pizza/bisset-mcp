@@ -147,6 +147,12 @@ class WorkflowEngine:
             raise ValueError(f"Session not found: {session_id}")
         if session.get("interview_status") is None:
             raise ValueError("No interview was started for this session.")
+        if session.get("interview_status") == "complete":
+            # Idempotent: an MCP client may retry — don't duplicate the event.
+            questions = self.db.list_interview_questions(session_id)
+            answered = sum(1 for q in questions if q["status"] == "answered")
+            return {"interview_status": "complete",
+                    "asked": len(questions), "answered": answered}
         open_q = self.db.get_open_interview_question(session_id)
         if open_q:
             raise ValueError(
@@ -174,7 +180,7 @@ class WorkflowEngine:
         if status is None:
             return None
         questions = self.db.list_interview_questions(session_id)
-        open_q = self.db.get_open_interview_question(session_id)
+        open_q = next((q for q in questions if q["status"] == "open"), None)
         pending = None
         if open_q:
             pending = {"id": open_q["id"], "order": open_q["order"],
@@ -192,11 +198,16 @@ class WorkflowEngine:
         session = self.db.get_session(session_id)
         if session and session.get("interview_status") == "open":
             open_q = self.db.get_open_interview_question(session_id)
-            detail = (f" Open question ({open_q['order']}): {open_q['question']!r}."
-                      if open_q else "")
+            if open_q:
+                raise ValueError(
+                    f"Interview in progress: question {open_q['order']} is open "
+                    f"({open_q['question']!r}). Answer it with interview_answer, "
+                    "then call interview_complete."
+                )
             raise ValueError(
-                "Interview in progress: answer the open question and call "
-                "interview_complete before adding steps." + detail
+                "Interview in progress: all questions are answered but the "
+                "interview is not declared complete. Call interview_complete "
+                "to add steps."
             )
         step_id = self.db.add_step(session_id, title, description, order, **kwargs)
         self.db.add_event(session_id, "step_added", step_id=step_id, data={
