@@ -87,6 +87,55 @@ class WorkflowEngine:
             "failed_steps": sum(1 for s in steps if s["status"] == "failed"),
         }
 
+    # -- Interview ----------------------------------------------------------------
+
+    def interview_question(self, session_id: str, question: str) -> dict:
+        """Register an interview question (one open at a time; reopens if complete)."""
+        question = (question or "").strip()
+        if not question:
+            raise ValueError("Question must not be empty")
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        open_q = self.db.get_open_interview_question(session_id)
+        if open_q:
+            raise ValueError(
+                f"An interview question is already open: {open_q['question']!r} "
+                f"(order {open_q['order']}). Record its answer via "
+                "interview_answer before asking another."
+            )
+        reopened = session.get("interview_status") == "complete"
+        qid = self.db.add_interview_question(session_id, question)
+        self.db.set_interview_status(session_id, "open")
+        if reopened:
+            self.db.add_event(session_id, "interview_reopened",
+                              data={"question_id": qid})
+        q = self.db.get_interview_question(qid)
+        self.db.add_event(session_id, "question_asked",
+                          data={"question_id": qid, "order": q["order"],
+                                "question": question})
+        return {"question_id": qid, "order": q["order"], "reopened": reopened}
+
+    def interview_answer(self, question_id: str, answer: str) -> dict:
+        """Record (or revise) the answer to an interview question.
+
+        Revising never changes interview_status: only interview_question
+        reopens a completed interview.
+        """
+        answer = (answer or "").strip()
+        if not answer:
+            raise ValueError("Answer must not be empty")
+        q = self.db.get_interview_question(question_id)
+        if not q:
+            raise ValueError(f"Interview question not found: {question_id}")
+        revised = q["status"] == "answered"
+        self.db.answer_interview_question(question_id, answer)
+        self.db.add_event(q["session_id"],
+                          "answer_revised" if revised else "answer_recorded",
+                          data={"question_id": question_id, "order": q["order"]})
+        return {"question_id": question_id, "order": q["order"],
+                "revised": revised}
+
     # -- Step -------------------------------------------------------------------
 
     def add_step(self, session_id: str, title: str, description: str, order: int,

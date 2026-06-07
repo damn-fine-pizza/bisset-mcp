@@ -408,3 +408,72 @@ def test_validate_feature_config_error_is_not_a_syntax_verdict(engine, tmp_path)
     shutil.rmtree(tmp_path / "features" / "steps")
     with pytest.raises(ValueError, match="configuration"):
         engine.validate_feature(step_id, sid)
+
+
+# -- Interview ------------------------------------------------------------------
+
+def test_interview_question_opens_interview(engine):
+    pid = engine.create_project("myapp", "/tmp/iv1")
+    sid = engine.start_session(pid, "new_project")
+    r = engine.interview_question(sid, "What does the project do?")
+    assert r["order"] == 1
+    assert r["reopened"] is False
+    assert engine.db.get_session(sid)["interview_status"] == "open"
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "question_asked" for e in events)
+
+
+def test_interview_question_rejects_second_open(engine):
+    pid = engine.create_project("myapp", "/tmp/iv2")
+    sid = engine.start_session(pid, "new_project")
+    engine.interview_question(sid, "First?")
+    with pytest.raises(ValueError, match="already open"):
+        engine.interview_question(sid, "Second?")
+
+
+def test_interview_question_rejects_empty(engine):
+    pid = engine.create_project("myapp", "/tmp/iv3")
+    sid = engine.start_session(pid, "new_project")
+    with pytest.raises(ValueError, match="empty"):
+        engine.interview_question(sid, "   ")
+
+
+def test_interview_question_unknown_session(engine):
+    with pytest.raises(ValueError, match="Session not found"):
+        engine.interview_question("nope", "Q?")
+
+
+def test_interview_answer_records_and_logs(engine):
+    pid = engine.create_project("myapp", "/tmp/iv4")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "What does it do?")["question_id"]
+    r = engine.interview_answer(qid, "It bakes pizzas")
+    assert r["revised"] is False
+    q = engine.db.get_interview_question(qid)
+    assert q["status"] == "answered"
+    assert q["answer"] == "It bakes pizzas"
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "answer_recorded" for e in events)
+
+
+def test_interview_answer_revision(engine):
+    pid = engine.create_project("myapp", "/tmp/iv5")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "What does it do?")["question_id"]
+    engine.interview_answer(qid, "First version")
+    r = engine.interview_answer(qid, "Corrected version")
+    assert r["revised"] is True
+    assert engine.db.get_interview_question(qid)["answer"] == "Corrected version"
+    types = [e["event_type"] for e in engine.db.list_events(sid)]
+    assert "answer_recorded" in types
+    assert "answer_revised" in types
+
+
+def test_interview_answer_rejects_empty_and_unknown(engine):
+    pid = engine.create_project("myapp", "/tmp/iv6")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "Q?")["question_id"]
+    with pytest.raises(ValueError, match="empty"):
+        engine.interview_answer(qid, "  ")
+    with pytest.raises(ValueError, match="not found"):
+        engine.interview_answer("nonexistent", "answer")
