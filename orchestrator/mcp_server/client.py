@@ -24,6 +24,7 @@ _GET_TOOLS = {
     "event_log",
     "step_get_feature",
     "step_validate_feature",
+    "analysis_view",
 }
 
 

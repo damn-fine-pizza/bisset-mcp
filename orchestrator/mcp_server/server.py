@@ -86,6 +86,32 @@ class BissetMCPServer:
              "inputSchema": {"type": "object", "properties": {
                  "session_id": {"type": "string"},
              }, "required": ["session_id"]}},
+            # Analysis
+            {"name": "analysis_submit",
+             "description": "Submit the proposed pipeline from codebase analysis: ordered steps with optional Gherkin drafts. Re-submitting an open proposal revises it. Check `submitted` in the response: false means a draft failed Gherkin validation (per-step errors) and nothing was saved",
+             "inputSchema": {"type": "object", "properties": {
+                 "session_id": {"type": "string"},
+                 "steps": {"type": "array", "items": {"type": "object", "properties": {
+                     "title": {"type": "string"},
+                     "description": {"type": "string"},
+                     "feature_draft": {"type": "string"},
+                 }, "required": ["title"]}},
+             }, "required": ["session_id", "steps"]}},
+            {"name": "analysis_view",
+             "description": "View the session's analysis proposal (status + proposed steps with drafts)",
+             "inputSchema": {"type": "object", "properties": {
+                 "session_id": {"type": "string"},
+             }, "required": ["session_id"]}},
+            {"name": "analysis_approve",
+             "description": "Approve the open analysis proposal: materializes real steps and writes feature drafts to disk. Requires no open interview. Call only on explicit human confirmation",
+             "inputSchema": {"type": "object", "properties": {
+                 "session_id": {"type": "string"},
+             }, "required": ["session_id"]}},
+            {"name": "analysis_discard",
+             "description": "Discard the open analysis proposal and unblock manual step_add",
+             "inputSchema": {"type": "object", "properties": {
+                 "session_id": {"type": "string"},
+             }, "required": ["session_id"]}},
             # Pipeline
             {"name": "step_current", "description": "Get current active step",
              "inputSchema": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}},

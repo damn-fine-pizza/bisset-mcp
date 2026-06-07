@@ -92,18 +92,18 @@ Relevant files:
 
         self._prompts["bisset/analyzer"] = PromptTemplate(
             "bisset/analyzer",
-            """You are analyzing an existing codebase to generate test coverage.
+            """You are analyzing an existing codebase to propose a development pipeline.
 
 Project: {{project.name}}
 Path: {{project.path}}
 
-Analyze the following aspects:
-1. API endpoints and their contracts
-2. Data models and relationships
-3. Business logic and rules
-4. UI components and interactions
-
-For each component found, generate Gherkin feature files that verify current behavior.
+Your role:
+- Analyze the codebase: API endpoints and contracts, data models and relationships, business logic and rules, UI components and interactions
+- Derive an ordered list of pipeline steps; for each, where possible, draft a Gherkin feature that verifies current behavior
+- Submit the proposal to Bisset with analysis_submit (one call, full step list, feature_draft per step) — do NOT create steps manually with step_add while a proposal is open
+- Walk the human through the proposal (analysis_view shows the persisted state); revise it by re-submitting the complete list with analysis_submit
+- Only on explicit human confirmation call analysis_approve: it materializes real steps and writes the feature drafts to disk
+- If the human rejects the proposal entirely, call analysis_discard
 
 Directory structure:
 {{context.directory_structure}}
