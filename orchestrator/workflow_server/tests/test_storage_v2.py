@@ -189,3 +189,28 @@ def test_migration_rejects_foreign_lineage(tmp_path):
     conn.close()
     with pytest.raises(RuntimeError, match="lineage"):
         Storage(db_path=db_file)
+
+
+def test_fresh_db_built_through_the_ladder():
+    """A fresh DB gets the v1 base schema + every ladder rung."""
+    from orchestrator.workflow_server.storage import SCHEMA_VERSION
+    db = Storage(db_path=":memory:")
+    ver = db.conn.execute("SELECT version FROM schema_version").fetchone()[0]
+    assert ver == SCHEMA_VERSION
+    cols = [r[1] for r in db.conn.execute("PRAGMA table_info(steps)").fetchall()]
+    # added by the 1->2 rung, NOT by the base schema
+    assert "feature_content" in cols
+    assert "feature_hash" in cols
+    db.close()
+
+
+def test_migrate_idempotent_on_reopen(tmp_path):
+    """Second open of an up-to-date DB: early return, no re-migration, no error."""
+    from orchestrator.workflow_server.storage import SCHEMA_VERSION
+    db_file = str(tmp_path / "ladder.db")
+    db = Storage(db_path=db_file)
+    db.close()
+    db = Storage(db_path=db_file)
+    ver = db.conn.execute("SELECT version FROM schema_version").fetchone()[0]
+    assert ver == SCHEMA_VERSION
+    db.close()

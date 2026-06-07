@@ -72,7 +72,13 @@ class Storage:
     # ── Schema Migration ──────────────────────────────────────────────────────
 
     def _migrate(self):
-        """Create or upgrade the schema (v2 adds feature_content/feature_hash)."""
+        """Create or upgrade the schema via a stepwise migration ladder.
+
+        Fresh databases get the v1 base schema and then every ladder rung
+        (_migrate_v1_to_v2, _migrate_v2_to_v3, ...), so every migration path
+        is exercised continuously. The base schema is frozen at v1: schema
+        changes only ever go in new ladder rungs.
+        """
         cur = self.conn.cursor()
 
         current = 0
@@ -100,88 +106,94 @@ class Storage:
                     "point DATABASE_PATH to a fresh location."
                 )
 
-        if current == 1:
-            # v1 -> v2: additive columns on steps (guarded: ALTER has no IF NOT EXISTS)
-            existing = {r[1] for r in cur.execute("PRAGMA table_info(steps)").fetchall()}
-            if "feature_content" not in existing:
-                cur.execute("ALTER TABLE steps ADD COLUMN feature_content TEXT")
-            if "feature_hash" not in existing:
-                cur.execute("ALTER TABLE steps ADD COLUMN feature_hash TEXT")
-            cur.execute("DELETE FROM schema_version")
-            cur.execute(
-                "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
-            )
-            self.conn.commit()
-        else:
-            cur.executescript("""
-            CREATE TABLE IF NOT EXISTS schema_version (
-                version INTEGER NOT NULL
-            );
+        if current == 0:
+            self._create_base_schema_v1(cur)
+            current = 1
 
-            CREATE TABLE IF NOT EXISTS projects (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                path TEXT NOT NULL UNIQUE,
-                test_runner TEXT NOT NULL DEFAULT 'generic',
-                test_args TEXT NOT NULL DEFAULT '',
-                adapter TEXT NOT NULL DEFAULT 'generic',
-                features_dir TEXT NOT NULL DEFAULT 'features/',
-                created_at REAL NOT NULL
-            );
+        while current < SCHEMA_VERSION:
+            getattr(self, f"_migrate_v{current}_to_v{current + 1}")(cur)
+            current += 1
 
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL REFERENCES projects(id),
-                workflow_type TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'active',
-                default_rules TEXT,
-                created_at REAL NOT NULL
-            );
+        cur.execute("DELETE FROM schema_version")
+        cur.execute(
+            "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
+        )
+        self.conn.commit()
 
-            CREATE TABLE IF NOT EXISTS steps (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL REFERENCES sessions(id),
-                title TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                "order" INTEGER NOT NULL,
-                feature_path TEXT,
-                -- feature_content/feature_hash also added by the v1->v2 ALTER path above; keep in sync
-                feature_content TEXT,
-                feature_hash TEXT,
-                gate TEXT NOT NULL DEFAULT 'tests_only',
-                depends_on TEXT,
-                rules_override TEXT,
-                status TEXT NOT NULL DEFAULT 'pending',
-                retries INTEGER NOT NULL DEFAULT 0,
-                current_coverage REAL NOT NULL DEFAULT 0.0,
-                gate_result TEXT,
-                created_at REAL NOT NULL
-            );
+    @staticmethod
+    def _create_base_schema_v1(cur: sqlite3.Cursor) -> None:
+        """The original v1 schema. Frozen: schema changes go in ladder rungs."""
+        cur.executescript("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER NOT NULL
+        );
 
-            CREATE TABLE IF NOT EXISTS test_runs (
-                id TEXT PRIMARY KEY,
-                step_id TEXT NOT NULL REFERENCES steps(id),
-                session_id TEXT NOT NULL REFERENCES sessions(id),
-                run_at REAL NOT NULL,
-                passed INTEGER NOT NULL DEFAULT 0,
-                failed INTEGER NOT NULL DEFAULT 0,
-                coverage REAL NOT NULL DEFAULT 0.0,
-                runner_output TEXT NOT NULL DEFAULT ''
-            );
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL UNIQUE,
+            test_runner TEXT NOT NULL DEFAULT 'generic',
+            test_args TEXT NOT NULL DEFAULT '',
+            adapter TEXT NOT NULL DEFAULT 'generic',
+            features_dir TEXT NOT NULL DEFAULT 'features/',
+            created_at REAL NOT NULL
+        );
 
-            CREATE TABLE IF NOT EXISTS events (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL REFERENCES sessions(id),
-                event_type TEXT NOT NULL,
-                step_id TEXT,
-                data TEXT,
-                timestamp REAL NOT NULL
-            );
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            workflow_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            default_rules TEXT,
+            created_at REAL NOT NULL
+        );
 
-            DELETE FROM schema_version;
-            INSERT INTO schema_version (version) VALUES (2);
-            """)
-            self.conn.commit()
+        CREATE TABLE IF NOT EXISTS steps (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            "order" INTEGER NOT NULL,
+            feature_path TEXT,
+            gate TEXT NOT NULL DEFAULT 'tests_only',
+            depends_on TEXT,
+            rules_override TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            retries INTEGER NOT NULL DEFAULT 0,
+            current_coverage REAL NOT NULL DEFAULT 0.0,
+            gate_result TEXT,
+            created_at REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS test_runs (
+            id TEXT PRIMARY KEY,
+            step_id TEXT NOT NULL REFERENCES steps(id),
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            run_at REAL NOT NULL,
+            passed INTEGER NOT NULL DEFAULT 0,
+            failed INTEGER NOT NULL DEFAULT 0,
+            coverage REAL NOT NULL DEFAULT 0.0,
+            runner_output TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS events (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            event_type TEXT NOT NULL,
+            step_id TEXT,
+            data TEXT,
+            timestamp REAL NOT NULL
+        );
+        """)
+
+    @staticmethod
+    def _migrate_v1_to_v2(cur: sqlite3.Cursor) -> None:
+        """v1 -> v2: additive feature columns on steps (guarded: ALTER has no IF NOT EXISTS)."""
+        existing = {r[1] for r in cur.execute("PRAGMA table_info(steps)").fetchall()}
+        if "feature_content" not in existing:
+            cur.execute("ALTER TABLE steps ADD COLUMN feature_content TEXT")
+        if "feature_hash" not in existing:
+            cur.execute("ALTER TABLE steps ADD COLUMN feature_hash TEXT")
 
     # ── Project ───────────────────────────────────────────────────────────────
 
