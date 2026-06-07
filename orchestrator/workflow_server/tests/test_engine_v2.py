@@ -618,7 +618,8 @@ def test_analysis_submit_opens_proposal(engine):
     rows = engine.db.list_proposal_steps(sid)
     assert [row["title"] for row in rows] == ["Cover health", "Cover orders"]
     events = engine.db.list_events(sid)
-    assert any(e["event_type"] == "analysis_submitted" for e in events)
+    submitted = [e for e in events if e["event_type"] == "analysis_submitted"]
+    assert submitted and submitted[0]["data"]["steps_proposed"] == 2
 
 
 def test_analysis_submit_rejects_empty_list_and_titles(engine):
@@ -770,7 +771,8 @@ def test_analysis_discard(engine):
     assert r == {"analysis_status": "discarded", "steps_discarded": 2}
     assert engine.db.get_session(sid)["analysis_status"] == "discarded"
     events = engine.db.list_events(sid)
-    assert any(e["event_type"] == "analysis_discarded" for e in events)
+    discarded = [e for e in events if e["event_type"] == "analysis_discarded"]
+    assert discarded and discarded[0]["data"]["steps_discarded"] == 2
     # rows remain readable after discard
     assert len(engine.analysis_view(sid)["steps"]) == 2
 

@@ -232,7 +232,7 @@ class WorkflowEngine:
         self.db.set_analysis_status(session_id, "open")
         drafted = sum(1 for s in cleaned if s["feature_draft"])
         event = "analysis_revised" if previous == "open" else "analysis_submitted"
-        data = {"steps": len(cleaned), "features_drafted": drafted}
+        data = {"steps_proposed": len(cleaned), "features_drafted": drafted}
         if previous and previous != "open":
             data["previous_status"] = previous
         self.db.add_event(session_id, event, data=data)
@@ -328,7 +328,7 @@ class WorkflowEngine:
         steps = self.db.list_proposal_steps(session_id)
         self.db.set_analysis_status(session_id, "discarded")
         self.db.add_event(session_id, "analysis_discarded",
-                          data={"steps": len(steps)})
+                          data={"steps_discarded": len(steps)})
         return {"analysis_status": "discarded", "steps_discarded": len(steps)}
 
     def _analysis_block(self, session_id: str, session: dict) -> dict | None:
