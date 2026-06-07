@@ -190,6 +190,70 @@ class WorkflowEngine:
                 "answered": sum(1 for q in questions if q["status"] == "answered"),
                 "pending_question": pending}
 
+    # -- Analysis -----------------------------------------------------------------
+
+    def analysis_submit(self, session_id: str, steps: list[dict]) -> dict:
+        """Open (or replace) the analysis proposal for a session.
+
+        Gherkin drafts are validated here so analysis_approve can never fail
+        on syntax. Re-submitting an open proposal replaces it (audited as
+        analysis_revised); re-submitting a terminal one opens a fresh
+        proposal and re-arms the step_add gate.
+        """
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        if not isinstance(steps, list) or not steps:
+            raise ValueError(
+                "Proposal must contain at least one step "
+                "({title, description?, feature_draft?})."
+            )
+        cleaned = []
+        errors = []
+        for idx, step in enumerate(steps, start=1):
+            title = (step.get("title") or "").strip()
+            if not title:
+                raise ValueError(f"Proposal step {idx} has an empty title.")
+            draft = step.get("feature_draft")
+            if draft is not None:
+                draft_errors = check_syntax(draft)
+                if draft_errors:
+                    errors.append({"order": idx, "title": title,
+                                   "errors": draft_errors})
+            cleaned.append({"title": title,
+                            "description": (step.get("description") or "").strip(),
+                            "feature_draft": draft})
+        if errors:
+            return {"submitted": False, "errors": errors}
+
+        previous = session.get("analysis_status")
+        self.db.replace_proposal_steps(session_id, cleaned)
+        self.db.set_analysis_status(session_id, "open")
+        drafted = sum(1 for s in cleaned if s["feature_draft"])
+        event = "analysis_revised" if previous == "open" else "analysis_submitted"
+        data = {"steps": len(cleaned), "features_drafted": drafted}
+        if previous and previous != "open":
+            data["previous_status"] = previous
+        self.db.add_event(session_id, event, data=data)
+        return {"submitted": True, "analysis_status": "open",
+                "steps_proposed": len(cleaned), "features_drafted": drafted,
+                "revised": previous == "open"}
+
+    def analysis_view(self, session_id: str) -> dict:
+        """Read the persisted proposal (status + proposed steps with drafts)."""
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        status = session.get("analysis_status")
+        if status is None:
+            return {"analysis_status": None, "steps": []}
+        steps = self.db.list_proposal_steps(session_id)
+        return {"analysis_status": status,
+                "steps": [{"order": s["order"], "title": s["title"],
+                           "description": s["description"],
+                           "feature_draft": s["feature_draft"]}
+                          for s in steps]}
+
     # -- Step -------------------------------------------------------------------
 
     def add_step(self, session_id: str, title: str, description: str, order: int,

@@ -598,3 +598,94 @@ def test_session_status_interview_block(engine):
     block = engine.session_status(sid)["interview"]
     assert block["status"] == "complete"
     assert block["pending_question"] is None
+
+
+# -- Analysis -----------------------------------------------------------------
+
+def test_analysis_submit_opens_proposal(engine):
+    pid = engine.create_project("legacy", "/tmp/an-app")
+    sid = engine.start_session(pid, "generate_tests")
+    r = engine.analysis_submit(sid, [
+        {"title": "Cover health", "description": "d", "feature_draft": VALID_FEATURE},
+        {"title": "Cover orders"},
+    ])
+    assert r["submitted"] is True
+    assert r["analysis_status"] == "open"
+    assert r["steps_proposed"] == 2
+    assert r["features_drafted"] == 1
+    assert r["revised"] is False
+    assert engine.db.get_session(sid)["analysis_status"] == "open"
+    rows = engine.db.list_proposal_steps(sid)
+    assert [row["title"] for row in rows] == ["Cover health", "Cover orders"]
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "analysis_submitted" for e in events)
+
+
+def test_analysis_submit_rejects_empty_list_and_titles(engine):
+    pid = engine.create_project("legacy", "/tmp/an-empty")
+    sid = engine.start_session(pid, "generate_tests")
+    with pytest.raises(ValueError, match="at least one step"):
+        engine.analysis_submit(sid, [])
+    with pytest.raises(ValueError, match="empty title"):
+        engine.analysis_submit(sid, [{"title": "  "}])
+    assert engine.db.get_session(sid)["analysis_status"] is None
+    assert engine.db.list_proposal_steps(sid) == []
+
+
+def test_analysis_submit_rejects_bad_gherkin_without_writing(engine):
+    pid = engine.create_project("legacy", "/tmp/an-bad")
+    sid = engine.start_session(pid, "generate_tests")
+    r = engine.analysis_submit(sid, [
+        {"title": "Good", "feature_draft": VALID_FEATURE},
+        {"title": "Bad", "feature_draft": "this is not gherkin at all"},
+    ])
+    assert r["submitted"] is False
+    assert r["errors"][0]["order"] == 2
+    assert r["errors"][0]["title"] == "Bad"
+    assert r["errors"][0]["errors"]  # check_syntax findings
+    assert engine.db.get_session(sid)["analysis_status"] is None
+    assert engine.db.list_proposal_steps(sid) == []
+
+
+def test_analysis_resubmit_open_revises(engine):
+    pid = engine.create_project("legacy", "/tmp/an-rev")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A1"}, {"title": "A2"}, {"title": "A3"}])
+    r2 = engine.analysis_submit(sid, [{"title": "B1"}, {"title": "B2"}])
+    assert r2["revised"] is True
+    assert [row["title"] for row in engine.db.list_proposal_steps(sid)] == ["B1", "B2"]
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "analysis_revised" for e in events)
+
+
+def test_analysis_resubmit_after_terminal_reopens(engine):
+    pid = engine.create_project("legacy", "/tmp/an-reopen")
+    sid = engine.start_session(pid, "generate_tests")
+    engine.analysis_submit(sid, [{"title": "A"}])
+    engine.db.set_analysis_status(sid, "discarded")
+    r = engine.analysis_submit(sid, [{"title": "Fresh"}])
+    assert r["revised"] is False
+    assert engine.db.get_session(sid)["analysis_status"] == "open"
+    submitted = [e for e in engine.db.list_events(sid)
+                 if e["event_type"] == "analysis_submitted"]
+    assert any(e["data"] and e["data"].get("previous_status") == "discarded"
+               for e in submitted)
+
+
+def test_analysis_submit_unknown_session(engine):
+    with pytest.raises(ValueError, match="Session not found"):
+        engine.analysis_submit("nope", [{"title": "X"}])
+
+
+def test_analysis_view(engine):
+    pid = engine.create_project("legacy", "/tmp/an-view")
+    sid = engine.start_session(pid, "generate_tests")
+    assert engine.analysis_view(sid) == {"analysis_status": None, "steps": []}
+    engine.analysis_submit(sid, [{"title": "A", "feature_draft": VALID_FEATURE}])
+    v = engine.analysis_view(sid)
+    assert v["analysis_status"] == "open"
+    assert v["steps"][0]["order"] == 1
+    assert v["steps"][0]["title"] == "A"
+    assert v["steps"][0]["feature_draft"] == VALID_FEATURE
+    with pytest.raises(ValueError, match="Session not found"):
+        engine.analysis_view("nope")
