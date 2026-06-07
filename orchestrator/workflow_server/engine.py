@@ -85,6 +85,7 @@ class WorkflowEngine:
             "total_steps": len(steps),
             "completed_steps": sum(1 for s in steps if s["status"] == "passed"),
             "failed_steps": sum(1 for s in steps if s["status"] == "failed"),
+            "interview": self._interview_block(session_id, session) if session else None,
         }
 
     # -- Interview ----------------------------------------------------------------
@@ -136,11 +137,64 @@ class WorkflowEngine:
         return {"question_id": question_id, "order": q["order"],
                 "revised": revised}
 
+    def interview_complete(self, session_id: str) -> dict:
+        """Declare the interview complete after invariant checks (gate opener)."""
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        if session.get("interview_status") is None:
+            raise ValueError("No interview was started for this session.")
+        open_q = self.db.get_open_interview_question(session_id)
+        if open_q:
+            raise ValueError(
+                f"Cannot complete the interview: question {open_q['order']} "
+                f"is still open: {open_q['question']!r}. Record its answer "
+                "via interview_answer first."
+            )
+        questions = self.db.list_interview_questions(session_id)
+        answered = sum(1 for q in questions if q["status"] == "answered")
+        if answered == 0:
+            raise ValueError(
+                "Cannot complete the interview: no answers recorded. Ask at "
+                "least one question via interview_question and record its "
+                "answer."
+            )
+        self.db.set_interview_status(session_id, "complete")
+        self.db.add_event(session_id, "interview_completed",
+                          data={"asked": len(questions), "answered": answered})
+        return {"interview_status": "complete",
+                "asked": len(questions), "answered": answered}
+
+    def _interview_block(self, session_id: str, session: dict) -> dict | None:
+        """Interview summary for status responses (None = never started)."""
+        status = session.get("interview_status")
+        if status is None:
+            return None
+        questions = self.db.list_interview_questions(session_id)
+        open_q = self.db.get_open_interview_question(session_id)
+        pending = None
+        if open_q:
+            pending = {"id": open_q["id"], "order": open_q["order"],
+                       "question": open_q["question"]}
+        return {"status": status,
+                "asked": len(questions),
+                "answered": sum(1 for q in questions if q["status"] == "answered"),
+                "pending_question": pending}
+
     # -- Step -------------------------------------------------------------------
 
     def add_step(self, session_id: str, title: str, description: str, order: int,
                  **kwargs) -> str:
-        """Add a step to a session."""
+        """Add a step to a session (gated while an interview is open)."""
+        session = self.db.get_session(session_id)
+        if session and session.get("interview_status") == "open":
+            open_q = self.db.get_open_interview_question(session_id)
+            detail = (f" Open question ({open_q['order']}): {open_q['question']!r}."
+                      if open_q else "")
+            raise ValueError(
+                "Interview in progress: answer the open question and call "
+                "interview_complete before adding steps." + detail
+            )
         step_id = self.db.add_step(session_id, title, description, order, **kwargs)
         self.db.add_event(session_id, "step_added", step_id=step_id, data={
             "title": title, "order": order,
