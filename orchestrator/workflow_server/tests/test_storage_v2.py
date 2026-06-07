@@ -195,6 +195,22 @@ def test_migration_rejects_foreign_lineage(tmp_path):
         Storage(db_path=db_file)
 
 
+def test_migration_rejects_foreign_lineage_below_ceiling(tmp_path):
+    """A foreign DB reporting a sub-ceiling version must not enter the ladder."""
+    import sqlite3
+    db_file = str(tmp_path / "foreign-v2.db")
+    conn = sqlite3.connect(db_file)
+    conn.executescript("""
+        CREATE TABLE schema_version (version INTEGER NOT NULL);
+        INSERT INTO schema_version (version) VALUES (2);
+        CREATE TABLE tasks (id TEXT PRIMARY KEY);
+    """)
+    conn.commit()
+    conn.close()
+    with pytest.raises(RuntimeError, match="lineage"):
+        Storage(db_path=db_file)
+
+
 def test_fresh_db_built_through_the_ladder():
     """A fresh DB gets the v1 base schema + every ladder rung."""
     from orchestrator.workflow_server.storage import SCHEMA_VERSION

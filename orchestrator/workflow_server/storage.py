@@ -91,20 +91,23 @@ class Storage:
             )
             row = cur.fetchone()
             current = row[0] if row else 0
-            if current >= SCHEMA_VERSION:
+            if current:
                 # Sentinel check: a version number alone proves nothing — a DB
                 # from a different application lineage may report any version.
+                # Runs for every populated version, so a foreign DB can neither
+                # early-return nor enter the migration ladder.
                 cur.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='projects'"
                 )
-                if cur.fetchone():
-                    return
-                raise RuntimeError(
-                    f"Database at {self.db_path} reports schema version "
-                    f"{current} but has no 'projects' table — it belongs to a "
-                    "different application lineage. Move the file aside or "
-                    "point DATABASE_PATH to a fresh location."
-                )
+                if not cur.fetchone():
+                    raise RuntimeError(
+                        f"Database at {self.db_path} reports schema version "
+                        f"{current} but has no 'projects' table — it belongs to a "
+                        "different application lineage. Move the file aside or "
+                        "point DATABASE_PATH to a fresh location."
+                    )
+            if current >= SCHEMA_VERSION:
+                return
 
         if current == 0:
             self._create_base_schema_v1(cur)
