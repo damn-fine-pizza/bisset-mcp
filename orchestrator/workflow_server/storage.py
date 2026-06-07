@@ -5,7 +5,7 @@ import sqlite3
 import time
 import uuid
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class Storage:
@@ -195,6 +195,25 @@ class Storage:
         if "feature_hash" not in existing:
             cur.execute("ALTER TABLE steps ADD COLUMN feature_hash TEXT")
 
+    @staticmethod
+    def _migrate_v2_to_v3(cur: sqlite3.Cursor) -> None:
+        """v2 -> v3: interview as session state (guarded: ALTER has no IF NOT EXISTS)."""
+        existing = {r[1] for r in cur.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "interview_status" not in existing:
+            cur.execute("ALTER TABLE sessions ADD COLUMN interview_status TEXT")
+        cur.executescript("""
+        CREATE TABLE IF NOT EXISTS interview_questions (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            "order" INTEGER NOT NULL,
+            question TEXT NOT NULL,
+            answer TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            asked_at REAL NOT NULL,
+            answered_at REAL
+        );
+        """)
+
     # ── Project ───────────────────────────────────────────────────────────────
 
     def create_project(
@@ -293,6 +312,58 @@ class Storage:
     def update_session_status(self, session_id: str, status: str) -> None:
         self.conn.execute(
             "UPDATE sessions SET status=? WHERE id=?", (status, session_id)
+        )
+        self.conn.commit()
+
+    # ── Interview ─────────────────────────────────────────────────────────────
+
+    def set_interview_status(self, session_id: str, status: str) -> None:
+        self.conn.execute(
+            "UPDATE sessions SET interview_status=? WHERE id=?",
+            (status, session_id),
+        )
+        self.conn.commit()
+
+    def add_interview_question(self, session_id: str, question: str) -> str:
+        """Insert an open question with the next order number."""
+        self._require_lock()
+        qid = self._new_id()
+        row = self.conn.execute(
+            'SELECT COALESCE(MAX("order"), 0) + 1 FROM interview_questions '
+            "WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+        self.conn.execute(
+            'INSERT INTO interview_questions (id, session_id, "order", question, '
+            "status, asked_at) VALUES (?,?,?,?,?,?)",
+            (qid, session_id, row[0], question, "open", time.time()),
+        )
+        self.conn.commit()
+        return qid
+
+    def get_interview_question(self, question_id: str) -> dict | None:
+        return self._fetchone_dict(
+            "SELECT * FROM interview_questions WHERE id=?", (question_id,)
+        )
+
+    def list_interview_questions(self, session_id: str) -> list[dict]:
+        return self._fetchall_dict(
+            'SELECT * FROM interview_questions WHERE session_id=? ORDER BY "order"',
+            (session_id,),
+        )
+
+    def get_open_interview_question(self, session_id: str) -> dict | None:
+        return self._fetchone_dict(
+            "SELECT * FROM interview_questions WHERE session_id=? AND status='open' "
+            'ORDER BY "order" LIMIT 1',
+            (session_id,),
+        )
+
+    def answer_interview_question(self, question_id: str, answer: str) -> None:
+        self.conn.execute(
+            "UPDATE interview_questions SET answer=?, status='answered', "
+            "answered_at=? WHERE id=?",
+            (answer, time.time(), question_id),
         )
         self.conn.commit()
 
