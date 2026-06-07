@@ -204,6 +204,19 @@ def test_fresh_db_built_through_the_ladder():
     db.close()
 
 
+def test_base_schema_v1_has_no_feature_columns():
+    """Base schema is frozen: feature_content/feature_hash must NOT appear in v1.
+    Only the _migrate_v1_to_v2 rung adds them."""
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    cur = conn.cursor()
+    Storage._create_base_schema_v1(cur)
+    cols = {r[1] for r in cur.execute("PRAGMA table_info(steps)").fetchall()}
+    assert "feature_content" not in cols
+    assert "feature_hash" not in cols
+    conn.close()
+
+
 def test_migrate_idempotent_on_reopen(tmp_path):
     """Second open of an up-to-date DB: early return, no re-migration, no error."""
     from orchestrator.workflow_server.storage import SCHEMA_VERSION
