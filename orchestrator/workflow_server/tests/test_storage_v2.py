@@ -171,3 +171,21 @@ def test_migration_v1_to_v2_adds_feature_columns(tmp_path):
     ver = db.conn.execute("SELECT version FROM schema_version").fetchone()[0]
     assert ver == 2
     db.close()
+
+
+def test_migration_rejects_foreign_lineage(tmp_path):
+    """A DB reporting a higher schema_version but missing the projects table
+    belongs to a different application lineage: fail loudly, never silently
+    skip table creation (collaudo finding, issue #5)."""
+    import sqlite3
+    db_file = str(tmp_path / "legacy.db")
+    conn = sqlite3.connect(db_file)
+    conn.executescript("""
+        CREATE TABLE schema_version (version INTEGER NOT NULL);
+        INSERT INTO schema_version (version) VALUES (7);
+        CREATE TABLE tasks (id TEXT PRIMARY KEY);
+    """)
+    conn.commit()
+    conn.close()
+    with pytest.raises(RuntimeError, match="lineage"):
+        Storage(db_path=db_file)

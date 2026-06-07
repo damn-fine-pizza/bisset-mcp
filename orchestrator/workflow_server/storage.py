@@ -86,7 +86,19 @@ class Storage:
             row = cur.fetchone()
             current = row[0] if row else 0
             if current >= SCHEMA_VERSION:
-                return
+                # Sentinel check: a version number alone proves nothing — a DB
+                # from a different application lineage may report any version.
+                cur.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='projects'"
+                )
+                if cur.fetchone():
+                    return
+                raise RuntimeError(
+                    f"Database at {self.db_path} reports schema version "
+                    f"{current} but has no 'projects' table — it belongs to a "
+                    "different application lineage. Move the file aside or "
+                    "point DATABASE_PATH to a fresh location."
+                )
 
         if current == 1:
             # v1 -> v2: additive columns on steps (guarded: ALTER has no IF NOT EXISTS)
