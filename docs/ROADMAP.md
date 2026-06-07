@@ -1,6 +1,6 @@
 # Bisset — Roadmap
 
-Updated: 2026-06-07. Order = priority. Each item ships as its own
+Updated: 2026-06-07 (interview tools delivered). Order = priority. Each item ships as its own
 design → plan → reviewed implementation cycle (see `docs/plans/`).
 
 ## Delivered
@@ -13,44 +13,36 @@ design → plan → reviewed implementation cycle (see `docs/plans/`).
 - **Gherkin tools** — `step_set_feature` / `step_get_feature` /
   `step_validate_feature`: the agent hands Gherkin to Bisset; disk = truth,
   DB = SHA-256 registry; drift detected, reported, realigned, audited
+- **Interview as state** — `interview_question` / `interview_answer` /
+  `interview_complete`: the requirements dialogue persisted per session,
+  resumable mid-question, audited in `event_log`; conditional gate blocks
+  `step_add` while an interview is open; stepwise migration ladder (schema v3)
 
 ## Next
 
-### 1. `interview_answer` — interview as Bisset state
-Today the requirements interview happens in chat (Claude asks, you answer)
-and only its *outcome* reaches Bisset via `step_add`/`step_set_feature`. The
-conversation itself is lost on session end.
-
-Goal: the interview becomes Bisset state — questions and answers persisted,
-resumable via `session_resume`, fully visible in `event_log`. Bisset acts as
-secretary of the requirements phase, not just of execution. The existing
-`bisset/interviewer` prompt drives the questions; Bisset stores the dialogue
-and tracks completeness.
-
-Scope sketch (to be designed): interview storage (per session), tool(s) to
-record an answer and get the next open question, completion signal that
-hands over to step generation. Bisset still calls no LLM.
-
-## Later
-
-### 2. `analyze_codebase`
+### 1. `analyze_codebase`
 For existing projects: Claude analyzes the codebase, Bisset persists the
 proposed step list + draft features as reviewable pipeline state
 (`generate_tests` / `new_feature` workflows depend on this).
 
-### 3. Workflow phases
+## Later
+
+### 2. Workflow phases
 Make `new_project` / `new_feature` / `generate_tests` real meta-phases
 (interview → design → generate → execute) that produce concrete steps and
 then disappear, as per the v2 design.
 
-### 4. Hardening backlog (small, opportunistic)
+### 3. Hardening backlog (small, opportunistic)
 - pytest adapter coverage (currently always 0; gate on coverage is
   behave-only and opt-in)
 - storage lock semantics: `update_step`/`add_event` bypass `_require_lock`
   (pre-existing inconsistency flagged in review)
-- schema migration ladder: switch to a stepwise version loop before v3
 - uniform HTTP 400 validation for missing body fields (today: KeyError → 500,
   house style)
+- atomic interview writes: `interview_question` issues two commits
+  (question insert + status update); a crash between them leaves an orphan
+  open question invisible to the gate (flagged in review, negligible
+  single-user risk)
 
 ## Non-goals (for now)
 

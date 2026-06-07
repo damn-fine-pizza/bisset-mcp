@@ -98,6 +98,30 @@ they are detected (hash mismatch), reported in tool responses, logged as
 All adapter output is stripped of ANSI escape codes before being stored or
 returned, so the model receives clean, structured feedback.
 
+## Interview tools
+
+The requirements interview is Bisset state: questions and answers live in the
+DB, survive session ends, and are fully audited. Claude asks (driven by the
+`bisset/interviewer` prompt); Bisset records. Bisset calls no LLM.
+
+| Tool | What it does |
+|------|--------------|
+| `interview_question` | Registers the question and opens it (one open question at a time). On a completed interview: reopens it and re-arms the gate |
+| `interview_answer` | Records the user's answer, closing the question. Re-answering revises with an `answer_revised` audit event |
+| `interview_complete` | Declares the interview complete. Invariants: no open question, at least one answer. Unblocks `step_add`. Idempotent on retry |
+
+Gate: **conditional on existence**. Sessions that never start an interview
+behave exactly as before. Once a question is registered, `step_add` is
+rejected (with the pending question in the error) until `interview_complete`
+passes — if you start the interview, you finish it.
+
+Resume: `session_status` and `session_resume` carry an `interview` block with
+`status`, `asked`/`answered` counts and the `pending_question`, so the agent
+can pick up the thread mid-interview.
+
+Audit: `question_asked`, `answer_recorded`, `answer_revised`,
+`interview_completed`, `interview_reopened` events in the session log.
+
 ## Enforcement summary
 
 | Actor | Role | Can lie? |
