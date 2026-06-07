@@ -687,6 +687,20 @@ def test_add_step_gated_by_open_interview(engine):
     assert engine.db.get_step(step_id) is not None
 
 
+def test_revision_does_not_reopen_completed_interview(engine):
+    """Design decision 5: revising never changes interview_status."""
+    pid = engine.create_project("myapp", "/tmp/ic8")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "Q1?")["question_id"]
+    engine.interview_answer(qid, "A1")
+    engine.interview_complete(sid)
+    engine.interview_answer(qid, "A1 corrected")  # revise after completion
+    assert engine.db.get_session(sid)["interview_status"] == "complete"
+    # the gate stays open
+    step_id = engine.add_step(sid, "S1", "d", 1)
+    assert step_id is not None
+
+
 def test_session_status_interview_block(engine):
     pid = engine.create_project("myapp", "/tmp/ic7")
     sid = engine.start_session(pid, "new_project")
@@ -707,7 +721,7 @@ def test_session_status_interview_block(engine):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `PYTHONPATH=. .venv/bin/python3 -m pytest orchestrator/workflow_server/tests/test_engine_v2.py -q`
-Expected: 7 FAIL (`no attribute 'interview_complete'`, gate not raising, missing `interview` key)
+Expected: 8 FAIL (`no attribute 'interview_complete'`, gate not raising, missing `interview` key)
 
 - [ ] **Step 3: Implement**
 
@@ -800,7 +814,7 @@ In `orchestrator/workflow_server/engine.py`:
 - [ ] **Step 4: Run the whole suite**
 
 Run: `PYTHONPATH=. .venv/bin/python3 -m pytest orchestrator/ -q`
-Expected: **118 passed** (111 + 7). Sessions without an interview keep the
+Expected: **119 passed** (111 + 8). Sessions without an interview keep the
 exact current `add_step` behaviour — every pre-existing test must stay green.
 
 - [ ] **Step 5: Commit**
@@ -960,7 +974,7 @@ async def interview_complete(request: Request) -> Dict[str, Any]:
 - [ ] **Step 4: Run the whole suite**
 
 Run: `PYTHONPATH=. .venv/bin/python3 -m pytest orchestrator/ -q`
-Expected: **121 passed** (118 + 3). The `session_resume` payload change is
+Expected: **122 passed** (119 + 3). The `session_resume` payload change is
 additive (`session_id` untouched) — existing e2e tests must stay green.
 
 - [ ] **Step 5: Commit**
@@ -1040,7 +1054,7 @@ compatibility was the reason for past fixes here.)
 - [ ] **Step 4: Run the whole suite**
 
 Run: `PYTHONPATH=. .venv/bin/python3 -m pytest orchestrator/ -q`
-Expected: **123 passed** (121 + 2)
+Expected: **124 passed** (122 + 2)
 
 - [ ] **Step 5: Commit**
 
@@ -1109,7 +1123,7 @@ Relevant patterns:
 - [ ] **Step 4: Run the whole suite**
 
 Run: `PYTHONPATH=. .venv/bin/python3 -m pytest orchestrator/ -q`
-Expected: **124 passed** (123 + 1)
+Expected: **125 passed** (124 + 1)
 
 - [ ] **Step 5: Commit**
 
@@ -1243,7 +1257,7 @@ def test_interview_lifecycle(client):
 - [ ] **Step 2: Run the whole suite**
 
 Run: `PYTHONPATH=. .venv/bin/python3 -m pytest orchestrator/ -q`
-Expected: **125 passed** (124 + 1)
+Expected: **126 passed** (125 + 1)
 
 - [ ] **Step 3: Commit**
 
@@ -1264,7 +1278,7 @@ python3 -m venv /tmp/interview-verify-venv
 PYTHONPATH=. /tmp/interview-verify-venv/bin/python3 -m pytest orchestrator/ -q
 rm -rf /tmp/interview-verify-venv
 ```
-Expected: **125 passed**
+Expected: **126 passed**
 
 - [ ] **Step 2: Demo still green (no-interview sessions untouched)**
 
