@@ -103,7 +103,7 @@ class BissetMCPServer:
                  "session_id": {"type": "string"},
              }, "required": ["session_id"]}},
             {"name": "analysis_approve",
-             "description": "Approve the open analysis proposal: materializes real steps and writes feature drafts to disk. Requires no open interview. Call only on explicit human confirmation",
+             "description": "Approve the open analysis proposal: materializes real steps, writes feature drafts to disk and unblocks step_add. Requires no open interview. Call only on explicit human confirmation",
              "inputSchema": {"type": "object", "properties": {
                  "session_id": {"type": "string"},
              }, "required": ["session_id"]}},

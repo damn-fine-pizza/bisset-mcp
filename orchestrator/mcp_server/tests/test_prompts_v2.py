@@ -67,4 +67,4 @@ def test_analyzer_prompt_mentions_analysis_tools():
                  "analysis_approve", "analysis_discard"):
         assert tool in text
     # the prompt must forbid bypassing the proposal with manual step_add
-    assert "step_add" in text
+    assert "do NOT create steps manually with step_add" in text
