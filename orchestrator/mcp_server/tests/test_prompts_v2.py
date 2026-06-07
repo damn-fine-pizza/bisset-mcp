@@ -51,3 +51,10 @@ def test_registry_render_prompt():
     assert len(result) > 0
     # Should not contain unresolved DB vars that were provided
     assert "{{step.title}}" not in result
+
+
+def test_interviewer_prompt_mentions_interview_tools():
+    reg = PromptRegistry()
+    text = reg.render("bisset/interviewer", {}, {})
+    for tool in ("interview_question", "interview_answer", "interview_complete"):
+        assert tool in text

@@ -53,3 +53,17 @@ def test_gherkin_tools_exposed():
     from orchestrator.mcp_server.server import BissetMCPServer
     tools = {t["name"] for t in BissetMCPServer()._build_tools()}
     assert {"step_set_feature", "step_get_feature", "step_validate_feature"} <= tools
+
+
+def test_interview_tools_exposed():
+    from orchestrator.mcp_server.server import BissetMCPServer
+    tools = {t["name"] for t in BissetMCPServer()._build_tools()}
+    assert {"interview_question", "interview_answer", "interview_complete"} <= tools
+
+
+def test_interview_tools_routing():
+    from orchestrator.mcp_server.client import _GET_TOOLS
+    # all three are writes: they must go through POST
+    assert "interview_question" not in _GET_TOOLS
+    assert "interview_answer" not in _GET_TOOLS
+    assert "interview_complete" not in _GET_TOOLS

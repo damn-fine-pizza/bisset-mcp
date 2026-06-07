@@ -125,7 +125,8 @@ def test_reopen_v2_database_is_noop(tmp_path):
     ver = db2.conn.execute("SELECT version FROM schema_version").fetchone()[0]
     db2.close()
     assert cols_after == cols_before
-    assert ver == 2
+    from orchestrator.workflow_server.storage import SCHEMA_VERSION
+    assert ver == SCHEMA_VERSION
 
 
 def test_migration_v1_to_v2_adds_feature_columns(tmp_path):
@@ -168,8 +169,11 @@ def test_migration_v1_to_v2_adds_feature_columns(tmp_path):
     cols = [r[1] for r in db.conn.execute("PRAGMA table_info(steps)").fetchall()]
     assert "feature_content" in cols
     assert "feature_hash" in cols
+    from orchestrator.workflow_server.storage import SCHEMA_VERSION
     ver = db.conn.execute("SELECT version FROM schema_version").fetchone()[0]
-    assert ver == 2
+    assert ver == SCHEMA_VERSION  # v1 walks the whole ladder, not just one rung
+    scols = [r[1] for r in db.conn.execute("PRAGMA table_info(sessions)").fetchall()]
+    assert "interview_status" in scols
     db.close()
 
 
@@ -189,3 +193,163 @@ def test_migration_rejects_foreign_lineage(tmp_path):
     conn.close()
     with pytest.raises(RuntimeError, match="lineage"):
         Storage(db_path=db_file)
+
+
+def test_migration_rejects_foreign_lineage_below_ceiling(tmp_path):
+    """A foreign DB reporting a sub-ceiling version must not enter the ladder."""
+    import sqlite3
+    db_file = str(tmp_path / "foreign-v2.db")
+    conn = sqlite3.connect(db_file)
+    conn.executescript("""
+        CREATE TABLE schema_version (version INTEGER NOT NULL);
+        INSERT INTO schema_version (version) VALUES (2);
+        CREATE TABLE tasks (id TEXT PRIMARY KEY);
+    """)
+    conn.commit()
+    conn.close()
+    with pytest.raises(RuntimeError, match="lineage"):
+        Storage(db_path=db_file)
+
+
+def test_fresh_db_built_through_the_ladder():
+    """A fresh DB gets the v1 base schema + every ladder rung."""
+    from orchestrator.workflow_server.storage import SCHEMA_VERSION
+    db = Storage(db_path=":memory:")
+    ver = db.conn.execute("SELECT version FROM schema_version").fetchone()[0]
+    assert ver == SCHEMA_VERSION
+    cols = [r[1] for r in db.conn.execute("PRAGMA table_info(steps)").fetchall()]
+    # added by the 1->2 rung, NOT by the base schema
+    assert "feature_content" in cols
+    assert "feature_hash" in cols
+    db.close()
+
+
+def test_base_schema_v1_has_no_feature_columns():
+    """Base schema is frozen: feature_content/feature_hash must NOT appear in v1.
+    Only the _migrate_v1_to_v2 rung adds them."""
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    cur = conn.cursor()
+    Storage._create_base_schema_v1(cur)
+    cols = {r[1] for r in cur.execute("PRAGMA table_info(steps)").fetchall()}
+    assert "feature_content" not in cols
+    assert "feature_hash" not in cols
+    conn.close()
+
+
+def test_migrate_idempotent_on_reopen(tmp_path):
+    """Second open of an up-to-date DB: early return, no re-migration, no error."""
+    from orchestrator.workflow_server.storage import SCHEMA_VERSION
+    db_file = str(tmp_path / "ladder.db")
+    db = Storage(db_path=db_file)
+    db.close()
+    db = Storage(db_path=db_file)
+    ver = db.conn.execute("SELECT version FROM schema_version").fetchone()[0]
+    assert ver == SCHEMA_VERSION
+    db.close()
+
+
+def _build_v2_db(db_file):
+    """A handmade v2 database (v1 schema + feature columns + version 2)."""
+    import sqlite3
+    conn = sqlite3.connect(db_file)
+    conn.executescript("""
+        CREATE TABLE schema_version (version INTEGER NOT NULL);
+        INSERT INTO schema_version (version) VALUES (2);
+        CREATE TABLE projects (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
+            test_runner TEXT NOT NULL DEFAULT 'generic', test_args TEXT NOT NULL DEFAULT '',
+            adapter TEXT NOT NULL DEFAULT 'generic', features_dir TEXT NOT NULL DEFAULT 'features/',
+            created_at REAL NOT NULL);
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+            workflow_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+            default_rules TEXT, created_at REAL NOT NULL);
+        CREATE TABLE steps (
+            id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
+            title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+            "order" INTEGER NOT NULL, feature_path TEXT,
+            feature_content TEXT, feature_hash TEXT,
+            gate TEXT NOT NULL DEFAULT 'tests_only', depends_on TEXT, rules_override TEXT,
+            status TEXT NOT NULL DEFAULT 'pending', retries INTEGER NOT NULL DEFAULT 0,
+            current_coverage REAL NOT NULL DEFAULT 0.0, gate_result TEXT, created_at REAL NOT NULL);
+        CREATE TABLE test_runs (
+            id TEXT PRIMARY KEY, step_id TEXT NOT NULL REFERENCES steps(id),
+            session_id TEXT NOT NULL REFERENCES sessions(id), run_at REAL NOT NULL,
+            passed INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
+            coverage REAL NOT NULL DEFAULT 0.0, runner_output TEXT NOT NULL DEFAULT '');
+        CREATE TABLE events (
+            id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
+            event_type TEXT NOT NULL, step_id TEXT, data TEXT, timestamp REAL NOT NULL);
+    """)
+    conn.commit()
+    conn.close()
+
+
+def test_migration_v2_to_v3_adds_interview_state(tmp_path):
+    from orchestrator.workflow_server.storage import SCHEMA_VERSION
+    db_file = str(tmp_path / "v2.db")
+    _build_v2_db(db_file)
+    db = Storage(db_path=db_file)
+    cols = [r[1] for r in db.conn.execute("PRAGMA table_info(sessions)").fetchall()]
+    assert "interview_status" in cols
+    tables = {r[0] for r in db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert "interview_questions" in tables
+    ver = db.conn.execute("SELECT version FROM schema_version").fetchone()[0]
+    assert ver == SCHEMA_VERSION
+    db.close()
+
+
+def test_interview_question_roundtrip(db):
+    pid = db.create_project("myapp", "/tmp/iq-app", "pytest", "", "pytest", "features/")
+    db.lock_project(pid)
+    sid = db.create_session("new_project")
+    q1 = db.add_interview_question(sid, "What does the project do?")
+    q2 = db.add_interview_question(sid, "Which constraints apply?")
+    qs = db.list_interview_questions(sid)
+    assert [q["order"] for q in qs] == [1, 2]
+    assert [q["id"] for q in qs] == [q1, q2]
+    assert all(q["status"] == "open" for q in qs)
+    assert qs[0]["asked_at"] is not None
+    # storage allows multiple open rows; the one-open invariant is engine-level
+    assert db.get_open_interview_question(sid)["id"] == q1
+    assert db.get_interview_question("nonexistent") is None
+
+
+def test_answer_interview_question(db):
+    pid = db.create_project("myapp", "/tmp/aq-app", "pytest", "", "pytest", "features/")
+    db.lock_project(pid)
+    sid = db.create_session("new_project")
+    qid = db.add_interview_question(sid, "What does it do?")
+    db.answer_interview_question(qid, "It bakes pizzas")
+    q = db.get_interview_question(qid)
+    assert q["status"] == "answered"
+    assert q["answer"] == "It bakes pizzas"
+    assert q["answered_at"] is not None
+    assert db.get_open_interview_question(sid) is None
+
+
+def test_add_interview_question_order_is_per_session(db):
+    """Order numbering is scoped to the session, never global."""
+    pid = db.create_project("myapp", "/tmp/iso-app", "pytest", "", "pytest", "features/")
+    db.lock_project(pid)
+    sid1 = db.create_session("new_project")
+    sid2 = db.create_session("new_feature")
+    assert db.list_interview_questions(sid2) == []
+    db.add_interview_question(sid1, "Q1")
+    db.add_interview_question(sid1, "Q2")
+    db.add_interview_question(sid2, "Q1-s2")
+    qs2 = db.list_interview_questions(sid2)
+    assert [q["order"] for q in qs2] == [1]  # must not be 3
+
+
+def test_set_interview_status(db):
+    pid = db.create_project("myapp", "/tmp/is-app", "pytest", "", "pytest", "features/")
+    db.lock_project(pid)
+    sid = db.create_session("new_project")
+    assert db.get_session(sid)["interview_status"] is None
+    db.set_interview_status(sid, "open")
+    assert db.get_session(sid)["interview_status"] == "open"
+    db.set_interview_status(sid, "complete")
+    assert db.get_session(sid)["interview_status"] == "complete"

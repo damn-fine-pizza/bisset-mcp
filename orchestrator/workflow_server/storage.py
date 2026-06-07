@@ -5,7 +5,7 @@ import sqlite3
 import time
 import uuid
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class Storage:
@@ -72,7 +72,13 @@ class Storage:
     # ── Schema Migration ──────────────────────────────────────────────────────
 
     def _migrate(self):
-        """Create or upgrade the schema (v2 adds feature_content/feature_hash)."""
+        """Create or upgrade the schema via a stepwise migration ladder.
+
+        Fresh databases get the v1 base schema and then every ladder rung
+        (_migrate_v1_to_v2, _migrate_v2_to_v3, ...), so every migration path
+        is exercised continuously. The base schema is frozen at v1: schema
+        changes only ever go in new ladder rungs.
+        """
         cur = self.conn.cursor()
 
         current = 0
@@ -85,103 +91,133 @@ class Storage:
             )
             row = cur.fetchone()
             current = row[0] if row else 0
-            if current >= SCHEMA_VERSION:
+            if current:
                 # Sentinel check: a version number alone proves nothing — a DB
                 # from a different application lineage may report any version.
+                # Runs for every populated version, so a foreign DB can neither
+                # early-return nor enter the migration ladder.
                 cur.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='projects'"
                 )
-                if cur.fetchone():
-                    return
-                raise RuntimeError(
-                    f"Database at {self.db_path} reports schema version "
-                    f"{current} but has no 'projects' table — it belongs to a "
-                    "different application lineage. Move the file aside or "
-                    "point DATABASE_PATH to a fresh location."
-                )
+                if not cur.fetchone():
+                    raise RuntimeError(
+                        f"Database at {self.db_path} reports schema version "
+                        f"{current} but has no 'projects' table — it belongs to a "
+                        "different application lineage. Move the file aside or "
+                        "point DATABASE_PATH to a fresh location."
+                    )
+            if current >= SCHEMA_VERSION:
+                return
 
-        if current == 1:
-            # v1 -> v2: additive columns on steps (guarded: ALTER has no IF NOT EXISTS)
-            existing = {r[1] for r in cur.execute("PRAGMA table_info(steps)").fetchall()}
-            if "feature_content" not in existing:
-                cur.execute("ALTER TABLE steps ADD COLUMN feature_content TEXT")
-            if "feature_hash" not in existing:
-                cur.execute("ALTER TABLE steps ADD COLUMN feature_hash TEXT")
-            cur.execute("DELETE FROM schema_version")
-            cur.execute(
-                "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
-            )
-            self.conn.commit()
-        else:
-            cur.executescript("""
-            CREATE TABLE IF NOT EXISTS schema_version (
-                version INTEGER NOT NULL
-            );
+        if current == 0:
+            self._create_base_schema_v1(cur)
+            current = 1
 
-            CREATE TABLE IF NOT EXISTS projects (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                path TEXT NOT NULL UNIQUE,
-                test_runner TEXT NOT NULL DEFAULT 'generic',
-                test_args TEXT NOT NULL DEFAULT '',
-                adapter TEXT NOT NULL DEFAULT 'generic',
-                features_dir TEXT NOT NULL DEFAULT 'features/',
-                created_at REAL NOT NULL
-            );
+        # Each rung must be idempotent: a crash mid-ladder leaves the version
+        # unbumped, so every rung from `current` replays on the next open.
+        while current < SCHEMA_VERSION:
+            getattr(self, f"_migrate_v{current}_to_v{current + 1}")(cur)
+            current += 1
 
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL REFERENCES projects(id),
-                workflow_type TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'active',
-                default_rules TEXT,
-                created_at REAL NOT NULL
-            );
+        cur.execute("DELETE FROM schema_version")
+        cur.execute(
+            "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
+        )
+        self.conn.commit()
 
-            CREATE TABLE IF NOT EXISTS steps (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL REFERENCES sessions(id),
-                title TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                "order" INTEGER NOT NULL,
-                feature_path TEXT,
-                -- feature_content/feature_hash also added by the v1->v2 ALTER path above; keep in sync
-                feature_content TEXT,
-                feature_hash TEXT,
-                gate TEXT NOT NULL DEFAULT 'tests_only',
-                depends_on TEXT,
-                rules_override TEXT,
-                status TEXT NOT NULL DEFAULT 'pending',
-                retries INTEGER NOT NULL DEFAULT 0,
-                current_coverage REAL NOT NULL DEFAULT 0.0,
-                gate_result TEXT,
-                created_at REAL NOT NULL
-            );
+    @staticmethod
+    def _create_base_schema_v1(cur: sqlite3.Cursor) -> None:
+        """The original v1 schema. Frozen: schema changes go in ladder rungs."""
+        cur.executescript("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER NOT NULL
+        );
 
-            CREATE TABLE IF NOT EXISTS test_runs (
-                id TEXT PRIMARY KEY,
-                step_id TEXT NOT NULL REFERENCES steps(id),
-                session_id TEXT NOT NULL REFERENCES sessions(id),
-                run_at REAL NOT NULL,
-                passed INTEGER NOT NULL DEFAULT 0,
-                failed INTEGER NOT NULL DEFAULT 0,
-                coverage REAL NOT NULL DEFAULT 0.0,
-                runner_output TEXT NOT NULL DEFAULT ''
-            );
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL UNIQUE,
+            test_runner TEXT NOT NULL DEFAULT 'generic',
+            test_args TEXT NOT NULL DEFAULT '',
+            adapter TEXT NOT NULL DEFAULT 'generic',
+            features_dir TEXT NOT NULL DEFAULT 'features/',
+            created_at REAL NOT NULL
+        );
 
-            CREATE TABLE IF NOT EXISTS events (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL REFERENCES sessions(id),
-                event_type TEXT NOT NULL,
-                step_id TEXT,
-                data TEXT,
-                timestamp REAL NOT NULL
-            );
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            workflow_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            default_rules TEXT,
+            created_at REAL NOT NULL
+        );
 
-            DELETE FROM schema_version;
-            INSERT INTO schema_version (version) VALUES (2);
-            """)
-            self.conn.commit()
+        CREATE TABLE IF NOT EXISTS steps (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            "order" INTEGER NOT NULL,
+            feature_path TEXT,
+            gate TEXT NOT NULL DEFAULT 'tests_only',
+            depends_on TEXT,
+            rules_override TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            retries INTEGER NOT NULL DEFAULT 0,
+            current_coverage REAL NOT NULL DEFAULT 0.0,
+            gate_result TEXT,
+            created_at REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS test_runs (
+            id TEXT PRIMARY KEY,
+            step_id TEXT NOT NULL REFERENCES steps(id),
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            run_at REAL NOT NULL,
+            passed INTEGER NOT NULL DEFAULT 0,
+            failed INTEGER NOT NULL DEFAULT 0,
+            coverage REAL NOT NULL DEFAULT 0.0,
+            runner_output TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS events (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            event_type TEXT NOT NULL,
+            step_id TEXT,
+            data TEXT,
+            timestamp REAL NOT NULL
+        );
+        """)
+
+    @staticmethod
+    def _migrate_v1_to_v2(cur: sqlite3.Cursor) -> None:
+        """v1 -> v2: additive feature columns on steps (guarded: ALTER has no IF NOT EXISTS)."""
+        existing = {r[1] for r in cur.execute("PRAGMA table_info(steps)").fetchall()}
+        if "feature_content" not in existing:
+            cur.execute("ALTER TABLE steps ADD COLUMN feature_content TEXT")
+        if "feature_hash" not in existing:
+            cur.execute("ALTER TABLE steps ADD COLUMN feature_hash TEXT")
+
+    @staticmethod
+    def _migrate_v2_to_v3(cur: sqlite3.Cursor) -> None:
+        """v2 -> v3: interview as session state (guarded: ALTER has no IF NOT EXISTS)."""
+        existing = {r[1] for r in cur.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "interview_status" not in existing:
+            cur.execute("ALTER TABLE sessions ADD COLUMN interview_status TEXT")
+        cur.executescript("""
+        CREATE TABLE IF NOT EXISTS interview_questions (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            "order" INTEGER NOT NULL,
+            question TEXT NOT NULL,
+            answer TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            asked_at REAL NOT NULL,
+            answered_at REAL
+        );
+        """)
 
     # ── Project ───────────────────────────────────────────────────────────────
 
@@ -281,6 +317,58 @@ class Storage:
     def update_session_status(self, session_id: str, status: str) -> None:
         self.conn.execute(
             "UPDATE sessions SET status=? WHERE id=?", (status, session_id)
+        )
+        self.conn.commit()
+
+    # ── Interview ─────────────────────────────────────────────────────────────
+
+    def set_interview_status(self, session_id: str, status: str) -> None:
+        self.conn.execute(
+            "UPDATE sessions SET interview_status=? WHERE id=?",
+            (status, session_id),
+        )
+        self.conn.commit()
+
+    def add_interview_question(self, session_id: str, question: str) -> str:
+        """Insert an open question with the next order number."""
+        self._require_lock()
+        qid = self._new_id()
+        row = self.conn.execute(
+            'SELECT COALESCE(MAX("order"), 0) + 1 FROM interview_questions '
+            "WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+        self.conn.execute(
+            'INSERT INTO interview_questions (id, session_id, "order", question, '
+            "status, asked_at) VALUES (?,?,?,?,?,?)",
+            (qid, session_id, row[0], question, "open", time.time()),
+        )
+        self.conn.commit()
+        return qid
+
+    def get_interview_question(self, question_id: str) -> dict | None:
+        return self._fetchone_dict(
+            "SELECT * FROM interview_questions WHERE id=?", (question_id,)
+        )
+
+    def list_interview_questions(self, session_id: str) -> list[dict]:
+        return self._fetchall_dict(
+            'SELECT * FROM interview_questions WHERE session_id=? ORDER BY "order"',
+            (session_id,),
+        )
+
+    def get_open_interview_question(self, session_id: str) -> dict | None:
+        return self._fetchone_dict(
+            "SELECT * FROM interview_questions WHERE session_id=? AND status='open' "
+            'ORDER BY "order" LIMIT 1',
+            (session_id,),
+        )
+
+    def answer_interview_question(self, question_id: str, answer: str) -> None:
+        self.conn.execute(
+            "UPDATE interview_questions SET answer=?, status='answered', "
+            "answered_at=? WHERE id=?",
+            (answer, time.time(), question_id),
         )
         self.conn.commit()
 

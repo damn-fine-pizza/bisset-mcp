@@ -408,3 +408,193 @@ def test_validate_feature_config_error_is_not_a_syntax_verdict(engine, tmp_path)
     shutil.rmtree(tmp_path / "features" / "steps")
     with pytest.raises(ValueError, match="configuration"):
         engine.validate_feature(step_id, sid)
+
+
+# -- Interview ------------------------------------------------------------------
+
+def test_interview_question_opens_interview(engine):
+    pid = engine.create_project("myapp", "/tmp/iv1")
+    sid = engine.start_session(pid, "new_project")
+    r = engine.interview_question(sid, "What does the project do?")
+    assert r["order"] == 1
+    assert r["reopened"] is False
+    assert engine.db.get_session(sid)["interview_status"] == "open"
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "question_asked" for e in events)
+
+
+def test_interview_question_rejects_second_open(engine):
+    pid = engine.create_project("myapp", "/tmp/iv2")
+    sid = engine.start_session(pid, "new_project")
+    engine.interview_question(sid, "First?")
+    with pytest.raises(ValueError, match="already open"):
+        engine.interview_question(sid, "Second?")
+
+
+def test_interview_question_rejects_empty(engine):
+    pid = engine.create_project("myapp", "/tmp/iv3")
+    sid = engine.start_session(pid, "new_project")
+    with pytest.raises(ValueError, match="empty"):
+        engine.interview_question(sid, "   ")
+
+
+def test_interview_question_unknown_session(engine):
+    with pytest.raises(ValueError, match="Session not found"):
+        engine.interview_question("nope", "Q?")
+
+
+def test_interview_answer_records_and_logs(engine):
+    pid = engine.create_project("myapp", "/tmp/iv4")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "What does it do?")["question_id"]
+    r = engine.interview_answer(qid, "It bakes pizzas")
+    assert r["revised"] is False
+    q = engine.db.get_interview_question(qid)
+    assert q["status"] == "answered"
+    assert q["answer"] == "It bakes pizzas"
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "answer_recorded" for e in events)
+
+
+def test_interview_answer_revision(engine):
+    pid = engine.create_project("myapp", "/tmp/iv5")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "What does it do?")["question_id"]
+    engine.interview_answer(qid, "First version")
+    r = engine.interview_answer(qid, "Corrected version")
+    assert r["revised"] is True
+    assert engine.db.get_interview_question(qid)["answer"] == "Corrected version"
+    types = [e["event_type"] for e in engine.db.list_events(sid)]
+    assert "answer_recorded" in types
+    assert "answer_revised" in types
+
+
+def test_interview_answer_rejects_empty_and_unknown(engine):
+    pid = engine.create_project("myapp", "/tmp/iv6")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "Q?")["question_id"]
+    with pytest.raises(ValueError, match="empty"):
+        engine.interview_answer(qid, "  ")
+    with pytest.raises(ValueError, match="not found"):
+        engine.interview_answer("nonexistent", "answer")
+
+
+def test_interview_complete_happy_path(engine):
+    pid = engine.create_project("myapp", "/tmp/ic1")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "What does it do?")["question_id"]
+    engine.interview_answer(qid, "It bakes pizzas")
+    r = engine.interview_complete(sid)
+    assert r == {"interview_status": "complete", "asked": 1, "answered": 1}
+    assert engine.db.get_session(sid)["interview_status"] == "complete"
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "interview_completed" for e in events)
+
+
+def test_interview_complete_rejects_open_question(engine):
+    pid = engine.create_project("myapp", "/tmp/ic2")
+    sid = engine.start_session(pid, "new_project")
+    engine.interview_question(sid, "Unanswered?")
+    with pytest.raises(ValueError, match="still open"):
+        engine.interview_complete(sid)
+
+
+def test_interview_complete_rejects_never_started(engine):
+    pid = engine.create_project("myapp", "/tmp/ic3")
+    sid = engine.start_session(pid, "new_project")
+    with pytest.raises(ValueError, match="No interview"):
+        engine.interview_complete(sid)
+
+
+def test_interview_complete_rejects_zero_answers(engine):
+    """Defense in depth: 'open' with no questions is unreachable via the
+    engine, but the invariant must hold even against direct DB state."""
+    pid = engine.create_project("myapp", "/tmp/ic4")
+    sid = engine.start_session(pid, "new_project")
+    engine.db.set_interview_status(sid, "open")
+    with pytest.raises(ValueError, match="no answers"):
+        engine.interview_complete(sid)
+
+
+def test_interview_complete_is_idempotent(engine):
+    """A retry (e.g. from an MCP client) must not duplicate the audit event."""
+    pid = engine.create_project("myapp", "/tmp/ic9")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "Q?")["question_id"]
+    engine.interview_answer(qid, "A")
+    first = engine.interview_complete(sid)
+    second = engine.interview_complete(sid)
+    assert second == first
+    events = [e for e in engine.db.list_events(sid)
+              if e["event_type"] == "interview_completed"]
+    assert len(events) == 1
+
+
+def test_interview_complete_rejects_unknown_session(engine):
+    with pytest.raises(ValueError, match="Session not found"):
+        engine.interview_complete("nope")
+
+
+def test_interview_reopen_after_complete(engine):
+    pid = engine.create_project("myapp", "/tmp/ic5")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "Q1?")["question_id"]
+    engine.interview_answer(qid, "A1")
+    engine.interview_complete(sid)
+    r = engine.interview_question(sid, "One more thing?")
+    assert r["reopened"] is True
+    assert engine.db.get_session(sid)["interview_status"] == "open"
+    events = engine.db.list_events(sid)
+    reopened_events = [e for e in events if e["event_type"] == "interview_reopened"]
+    assert len(reopened_events) == 1
+    assert reopened_events[0]["data"]["question_id"] == r["question_id"]
+    # the gate is re-armed
+    with pytest.raises(ValueError, match="Interview in progress"):
+        engine.add_step(sid, "S1", "d", 1)
+
+
+def test_add_step_gated_by_open_interview(engine):
+    pid = engine.create_project("myapp", "/tmp/ic6")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "What is the scope?")["question_id"]
+    # gate active, error is actionable: carries the pending question
+    with pytest.raises(ValueError, match="What is the scope"):
+        engine.add_step(sid, "S1", "d", 1)
+    engine.interview_answer(qid, "A small bakery API")
+    # still gated: answered but not completed
+    with pytest.raises(ValueError, match="interview_complete"):
+        engine.add_step(sid, "S1", "d", 1)
+    engine.interview_complete(sid)
+    step_id = engine.add_step(sid, "S1", "d", 1)
+    assert engine.db.get_step(step_id) is not None
+
+
+def test_revision_does_not_reopen_completed_interview(engine):
+    """Design decision 5: revising never changes interview_status."""
+    pid = engine.create_project("myapp", "/tmp/ic8")
+    sid = engine.start_session(pid, "new_project")
+    qid = engine.interview_question(sid, "Q1?")["question_id"]
+    engine.interview_answer(qid, "A1")
+    engine.interview_complete(sid)
+    engine.interview_answer(qid, "A1 corrected")  # revise after completion
+    assert engine.db.get_session(sid)["interview_status"] == "complete"
+    # the gate stays open
+    step_id = engine.add_step(sid, "S1", "d", 1)
+    assert step_id is not None
+
+
+def test_session_status_interview_block(engine):
+    pid = engine.create_project("myapp", "/tmp/ic7")
+    sid = engine.start_session(pid, "new_project")
+    assert engine.session_status(sid)["interview"] is None
+    qid = engine.interview_question(sid, "What does it do?")["question_id"]
+    block = engine.session_status(sid)["interview"]
+    assert block["status"] == "open"
+    assert block["asked"] == 1
+    assert block["answered"] == 0
+    assert block["pending_question"]["question"] == "What does it do?"
+    engine.interview_answer(qid, "Pizzas")
+    engine.interview_complete(sid)
+    block = engine.session_status(sid)["interview"]
+    assert block["status"] == "complete"
+    assert block["pending_question"] is None

@@ -85,13 +85,130 @@ class WorkflowEngine:
             "total_steps": len(steps),
             "completed_steps": sum(1 for s in steps if s["status"] == "passed"),
             "failed_steps": sum(1 for s in steps if s["status"] == "failed"),
+            "interview": self._interview_block(session_id, session) if session else None,
         }
+
+    # -- Interview ----------------------------------------------------------------
+
+    def interview_question(self, session_id: str, question: str) -> dict:
+        """Register an interview question (one open at a time; reopens if complete)."""
+        question = (question or "").strip()
+        if not question:
+            raise ValueError("Question must not be empty")
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        open_q = self.db.get_open_interview_question(session_id)
+        if open_q:
+            raise ValueError(
+                f"An interview question is already open: {open_q['question']!r} "
+                f"(order {open_q['order']}). Record its answer via "
+                "interview_answer before asking another."
+            )
+        reopened = session.get("interview_status") == "complete"
+        qid = self.db.add_interview_question(session_id, question)
+        self.db.set_interview_status(session_id, "open")
+        if reopened:
+            self.db.add_event(session_id, "interview_reopened",
+                              data={"question_id": qid})
+        q = self.db.get_interview_question(qid)
+        self.db.add_event(session_id, "question_asked",
+                          data={"question_id": qid, "order": q["order"],
+                                "question": question})
+        return {"question_id": qid, "order": q["order"], "reopened": reopened}
+
+    def interview_answer(self, question_id: str, answer: str) -> dict:
+        """Record (or revise) the answer to an interview question.
+
+        Revising never changes interview_status: only interview_question
+        reopens a completed interview.
+        """
+        answer = (answer or "").strip()
+        if not answer:
+            raise ValueError("Answer must not be empty")
+        q = self.db.get_interview_question(question_id)
+        if not q:
+            raise ValueError(f"Interview question not found: {question_id}")
+        revised = q["status"] == "answered"
+        self.db.answer_interview_question(question_id, answer)
+        # Deliberate asymmetry with question_asked: the answer text lives on
+        # the interview_questions row (canonical); events carry correlation
+        # ids only, so free text is not duplicated into the audit log.
+        self.db.add_event(q["session_id"],
+                          "answer_revised" if revised else "answer_recorded",
+                          data={"question_id": question_id, "order": q["order"]})
+        return {"question_id": question_id, "order": q["order"],
+                "revised": revised}
+
+    def interview_complete(self, session_id: str) -> dict:
+        """Declare the interview complete after invariant checks (gate opener)."""
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        if session.get("interview_status") is None:
+            raise ValueError("No interview was started for this session.")
+        if session.get("interview_status") == "complete":
+            # Idempotent: an MCP client may retry — don't duplicate the event.
+            questions = self.db.list_interview_questions(session_id)
+            answered = sum(1 for q in questions if q["status"] == "answered")
+            return {"interview_status": "complete",
+                    "asked": len(questions), "answered": answered}
+        open_q = self.db.get_open_interview_question(session_id)
+        if open_q:
+            raise ValueError(
+                f"Cannot complete the interview: question {open_q['order']} "
+                f"is still open: {open_q['question']!r}. Record its answer "
+                "via interview_answer first."
+            )
+        questions = self.db.list_interview_questions(session_id)
+        answered = sum(1 for q in questions if q["status"] == "answered")
+        if answered == 0:
+            raise ValueError(
+                "Cannot complete the interview: no answers recorded. Ask at "
+                "least one question via interview_question and record its "
+                "answer."
+            )
+        self.db.set_interview_status(session_id, "complete")
+        self.db.add_event(session_id, "interview_completed",
+                          data={"asked": len(questions), "answered": answered})
+        return {"interview_status": "complete",
+                "asked": len(questions), "answered": answered}
+
+    def _interview_block(self, session_id: str, session: dict) -> dict | None:
+        """Interview summary for status responses (None = never started)."""
+        status = session.get("interview_status")
+        if status is None:
+            return None
+        questions = self.db.list_interview_questions(session_id)
+        open_q = next((q for q in questions if q["status"] == "open"), None)
+        pending = None
+        if open_q:
+            pending = {"id": open_q["id"], "order": open_q["order"],
+                       "question": open_q["question"]}
+        return {"status": status,
+                "asked": len(questions),
+                "answered": sum(1 for q in questions if q["status"] == "answered"),
+                "pending_question": pending}
 
     # -- Step -------------------------------------------------------------------
 
     def add_step(self, session_id: str, title: str, description: str, order: int,
                  **kwargs) -> str:
-        """Add a step to a session."""
+        """Add a step to a session (gated while an interview is open)."""
+        session = self.db.get_session(session_id)
+        if session and session.get("interview_status") == "open":
+            open_q = self.db.get_open_interview_question(session_id)
+            if open_q:
+                raise ValueError(
+                    f"Interview in progress: question {open_q['order']} is open "
+                    f"({open_q['question']!r}). Answer it with interview_answer, "
+                    "then call interview_complete."
+                )
+            raise ValueError(
+                "Interview in progress: all questions are answered but the "
+                "interview is not declared complete. Call interview_complete "
+                "to add steps."
+            )
         step_id = self.db.add_step(session_id, title, description, order, **kwargs)
         self.db.add_event(session_id, "step_added", step_id=step_id, data={
             "title": title, "order": order,

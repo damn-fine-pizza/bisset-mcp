@@ -156,3 +156,54 @@ def test_gherkin_feature_lifecycle(client, tmp_path):
     r = client.get(f"/event_log?session_id={sid}")
     types = {e["event_type"] for e in _payload(r)["events"]}
     assert {"feature_set", "feature_drift"} <= types
+
+
+def test_interview_lifecycle(client):
+    """question -> gate blocks step_add -> answer -> complete -> step_add ok
+    -> audit trail -> resume reports the interview."""
+    r = client.post("/project_create", json={
+        "name": "interview-e2e", "path": "/tmp/interview-e2e",
+    })
+    pid = _payload(r)["project_id"]
+    r = client.post("/session_start", json={
+        "project_id": pid, "workflow_type": "new_project",
+    })
+    sid = _payload(r)["session_id"]
+
+    # 1. Claude registers the question before asking it
+    r = client.post("/interview_question", json={
+        "session_id": sid, "question": "What does the project do?",
+    })
+    qid = _payload(r)["question_id"]
+
+    # 2. The gate blocks step generation mid-interview
+    r = client.post("/step_add", json={"session_id": sid, "title": "S1", "order": 1})
+    assert r.json()["is_error"] is True
+    assert "What does the project do?" in _payload(r)["error"]
+
+    # 3. Resume mid-interview: the pending question comes back
+    r = client.post("/session_resume", json={"project_id": pid})
+    body = _payload(r)
+    assert body["session_id"] == sid
+    assert body["interview"]["pending_question"]["id"] == qid
+
+    # 4. pipeline_view carries the interview block too (additive)
+    r = client.get(f"/pipeline_view?session_id={sid}")
+    assert _payload(r)["interview"] is not None
+
+    # 5. Answer + complete
+    r = client.post("/interview_answer", json={
+        "question_id": qid, "answer": "A pizza ordering API",
+    })
+    assert _payload(r)["revised"] is False
+    r = client.post("/interview_complete", json={"session_id": sid})
+    assert _payload(r)["asked"] == 1
+
+    # 6. Gate open
+    r = client.post("/step_add", json={"session_id": sid, "title": "S1", "order": 1})
+    assert r.json()["is_error"] is False
+
+    # 7. Full audit trail
+    r = client.get(f"/event_log?session_id={sid}")
+    types = {e["event_type"] for e in _payload(r)["events"]}
+    assert {"question_asked", "answer_recorded", "interview_completed"} <= types
