@@ -493,3 +493,28 @@ def test_valid_request_still_succeeds_after_400_guard(client):
     assert r.json()["is_error"] is False
     payload = json.loads(r.json()["content"][0]["text"])
     assert "project_id" in payload
+
+
+def test_malformed_json_body_still_returns_500_not_400(client):
+    """Preservation: a non-JSON body is handled by the OUTER try (wrapped 500),
+    not mislabelled as a missing field. Locks the nested-try scoping."""
+    r = client.post("/session_start", content="this is not json",
+                    headers={"content-type": "application/json"})
+    data = r.json()
+    assert data["is_error"] is True
+    assert data["metadata"]["status"] == 500
+    payload = json.loads(data["content"][0]["text"])
+    assert "Missing required field" not in payload["error"]
+
+
+def test_deeper_error_not_mislabelled_missing_field(client):
+    """Preservation: a domain error with all required fields present falls
+    through to the wrapped 500 — the 400 guard catches ONLY missing top-level
+    fields, never a deeper failure."""
+    # all required fields present; the session simply does not exist
+    r = client.post("/interview_complete", json={"session_id": "does-not-exist"})
+    data = r.json()
+    assert data["is_error"] is True
+    assert data["metadata"]["status"] == 500
+    payload = json.loads(data["content"][0]["text"])
+    assert "Missing required field" not in payload["error"]
