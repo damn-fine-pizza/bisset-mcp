@@ -378,5 +378,10 @@ PYTHONPATH=. .venv/bin/python3 -m pytest orchestrator/ -q
 ./scripts/demo_bdd_gate.sh
 ```
 
-Expected: **173 passed**, and the demo exits 0 with its full red → blocked →
+Expected: **188 passed**, and the demo exits 0 with its full red → blocked →
 fix → green → accepted sequence. Both must succeed before declaring done.
+
+(Final count is 188, not the per-task 173 estimated above: two review-driven
+additions landed on top — preservation tests for the nested-try scoping
+[bad JSON / deeper error stay 500] and the 400 parametrize widened from 6 to
+all 19 POST routes.)

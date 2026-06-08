@@ -470,16 +470,32 @@ def test_session_resume_reports_analysis_block(client):
     assert body["analysis"]["steps_proposed"] == 1
 
 
-@pytest.mark.parametrize("path, body, code", [
-    ("/session_start", {}, "SESSION_START_ERROR"),
-    ("/interview_question", {"session_id": "x"}, "INTERVIEW_QUESTION_ERROR"),
-    ("/analysis_submit", {"session_id": "x"}, "ANALYSIS_SUBMIT_ERROR"),
-    ("/step_add", {"session_id": "x", "title": "t"}, "STEP_ADD_ERROR"),
-    ("/step_edit", {}, "STEP_EDIT_ERROR"),
-    ("/pipeline_set_rules", {"session_id": "x"}, "PIPELINE_SET_RULES_ERROR"),
+# Every POST handler with required body fields: an empty body must 400 (not
+# 500) with that handler's error code. Exhaustive over all 19 routes so a
+# future edit that drops a guard fails here.
+@pytest.mark.parametrize("path, code", [
+    ("/project_create", "PROJECT_CREATE_ERROR"),
+    ("/project_switch", "PROJECT_SWITCH_ERROR"),
+    ("/session_start", "SESSION_START_ERROR"),
+    ("/session_resume", "SESSION_RESUME_ERROR"),
+    ("/interview_question", "INTERVIEW_QUESTION_ERROR"),
+    ("/interview_answer", "INTERVIEW_ANSWER_ERROR"),
+    ("/interview_complete", "INTERVIEW_COMPLETE_ERROR"),
+    ("/analysis_submit", "ANALYSIS_SUBMIT_ERROR"),
+    ("/analysis_approve", "ANALYSIS_APPROVE_ERROR"),
+    ("/analysis_discard", "ANALYSIS_DISCARD_ERROR"),
+    ("/step_set_feature", "STEP_SET_FEATURE_ERROR"),
+    ("/step_run_tests", "STEP_RUN_TESTS_ERROR"),
+    ("/step_complete", "STEP_COMPLETE_ERROR"),
+    ("/step_skip", "STEP_SKIP_ERROR"),
+    ("/step_add", "STEP_ADD_ERROR"),
+    ("/step_remove", "STEP_REMOVE_ERROR"),
+    ("/step_edit", "STEP_EDIT_ERROR"),
+    ("/step_reorder", "STEP_REORDER_ERROR"),
+    ("/pipeline_set_rules", "PIPELINE_SET_RULES_ERROR"),
 ])
-def test_missing_required_field_returns_400(client, path, body, code):
-    r = client.post(path, json=body)
+def test_missing_required_field_returns_400(client, path, code):
+    r = client.post(path, json={})
     data = r.json()
     assert data["is_error"] is True
     assert data["metadata"]["status"] == 400
