@@ -14,22 +14,27 @@ caught by the broad `except Exception` and returned as HTTP 500
 (`is_error: True`, status 500). A client omitting a field gets a server-error
 shape for what is a client mistake.
 
-**Change:** in each POST handler, catch `KeyError` **only around the field
-extraction**, return a 400 with an actionable message, and leave the broad
-`except Exception → 500` below as the fallback. Scoping the catch to the
-extraction is the whole point: a deeper `KeyError` (e.g. a raw `step["title"]`
-in storage) must still fall through to 500, not be mislabelled "missing field".
+**Change:** in each POST handler, wrap **only the required-field extraction**
+in a nested `try` that catches `KeyError` and returns a 400 with an actionable
+message. The existing outer `try/except Exception → 500` stays exactly as is,
+so everything else keeps today's behaviour: a malformed/empty body
+(`json.JSONDecodeError`) and a deeper `KeyError` (e.g. a raw `step["title"]`
+in storage) both still fall through to the wrapped 500. Scoping the catch to
+the extraction is the whole point — only a genuinely missing top-level field
+is re-labelled 400.
 
 ```python
+    start = time.time()
     try:
         body = await request.json()
-        session_id = body["session_id"]
-        steps = body["steps"]
-    except KeyError as e:
-        return ResponseWrapper.error(f"Missing required field: {e}", "XXX_ERROR", 400)
-    try:
+        try:
+            session_id = body["session_id"]
+            steps = body["steps"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "XXX_ERROR", 400)
         result = request.app.state.engine.analysis_submit(session_id, steps)
-        ...
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
     except Exception as e:
         return ResponseWrapper.error(str(e), "XXX_ERROR", 500)
 ```
