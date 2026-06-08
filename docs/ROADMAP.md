@@ -1,6 +1,6 @@
 # Bisset — Roadmap
 
-Updated: 2026-06-07 (analysis tools delivered). Order = priority. Each item ships as its own
+Updated: 2026-06-08 (workflow phases deferred). Order = priority. Each item ships as its own
 design → plan → reviewed implementation cycle (see `docs/plans/`).
 
 ## Delivered
@@ -25,14 +25,7 @@ design → plan → reviewed implementation cycle (see `docs/plans/`).
 
 ## Next
 
-### 1. Workflow phases
-Make `new_project` / `new_feature` / `generate_tests` real meta-phases
-(interview → design → generate → execute) that produce concrete steps and
-then disappear, as per the v2 design.
-
-## Later
-
-### 2. Hardening backlog (small, opportunistic)
+### 1. Hardening backlog (small, opportunistic)
 - pytest adapter coverage (currently always 0; gate on coverage is
   behave-only and opt-in)
 - storage lock semantics: `update_step`/`add_event` bypass `_require_lock`
@@ -42,7 +35,27 @@ then disappear, as per the v2 design.
 - atomic interview writes: `interview_question` issues two commits
   (question insert + status update); a crash between them leaves an orphan
   open question invisible to the gate (flagged in review, negligible
-  single-user risk)
+  single-user risk); `analysis_approve` has the analogous non-atomic
+  materialization (declared, single-user risk)
+
+## Later
+
+### Workflow phases (deferred — candidate for removal)
+The v2 design framed `new_project` / `new_feature` / `generate_tests` as
+meta-phases (interview → design → generate → execute) that produce concrete
+steps and then disappear. **This is now largely subsumed:** interview tools,
+analysis tools, and the execute loop each already implement the "meta-step
+that produces steps and disappears" pattern, and `workflow_type` is otherwise
+a dead label. Building a phase state machine on top would mostly re-litigate
+the conditional gates already shipped with interview and analysis (premature
+abstraction over two working flows). The only residual gap is the greenfield
+`design` phase of `new_project`, and even that is covered in practice by
+`analysis_submit` (a reviewable pipeline proposal) — framing, not capability.
+
+Decision: do not build now. Re-evaluate only if dogfooding (developing a
+real feature *through* Bisset) surfaces a concrete moment where
+`session_status` does not already tell the agent what to do next. Absent that
+evidence, this item is likely to be dropped.
 
 ## Non-goals (for now)
 
