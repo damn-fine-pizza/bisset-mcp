@@ -1,6 +1,6 @@
 # Bisset — Roadmap
 
-Updated: 2026-06-08 (workflow phases deferred). Order = priority. Each item ships as its own
+Updated: 2026-06-08 (hardening: HTTP 400 + atomic interview open). Order = priority. Each item ships as its own
 design → plan → reviewed implementation cycle (see `docs/plans/`).
 
 ## Delivered
@@ -22,21 +22,19 @@ design → plan → reviewed implementation cycle (see `docs/plans/`).
   codebase analysis persisted as a reviewable pipeline proposal (step list +
   Gherkin drafts in DB); approval materializes real steps + feature files;
   conditional gate blocks `step_add` while a proposal is open (schema v4)
+- **Hardening** — missing required POST body fields return HTTP 400 (not 500);
+  opening an interview question is atomic (row + `interview_status` in one
+  transaction)
 
 ## Next
 
 ### 1. Hardening backlog (small, opportunistic)
 - pytest adapter coverage (currently always 0; gate on coverage is
-  behave-only and opt-in)
-- storage lock semantics: `update_step`/`add_event` bypass `_require_lock`
-  (pre-existing inconsistency flagged in review)
-- uniform HTTP 400 validation for missing body fields (today: KeyError → 500,
-  house style)
-- atomic interview writes: `interview_question` issues two commits
-  (question insert + status update); a crash between them leaves an orphan
-  open question invisible to the gate (flagged in review, negligible
-  single-user risk); `analysis_approve` has the analogous non-atomic
-  materialization (declared, single-user risk)
+  behave-only and opt-in) — semantic choice, needs its own mini-design
+- storage lock semantics: `update_step`/`add_event` and other writes bypass
+  `_require_lock` (subtle; in-memory per-instance lock; do isolated)
+- `analysis_approve` non-atomic materialization (writes N files to disk;
+  declared single-user risk, not SQLite-transactionable)
 
 ## Later
 

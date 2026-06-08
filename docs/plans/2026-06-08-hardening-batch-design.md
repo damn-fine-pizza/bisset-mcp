@@ -1,7 +1,7 @@
 # Hardening Batch — Design Document
 
 **Date:** 2026-06-08
-**Status:** Approved
+**Status:** Implemented
 **Scope:** Two items from the roadmap hardening backlog: uniform HTTP 400 on
 missing body fields (#3) and atomic interview-question open (#4). Deferred this
 round (user decision): pytest-adapter coverage (#1, a semantic choice, not a
