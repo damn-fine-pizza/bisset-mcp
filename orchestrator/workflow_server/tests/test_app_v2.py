@@ -468,3 +468,28 @@ def test_session_resume_reports_analysis_block(client):
     body = json.loads(r.json()["content"][0]["text"])
     assert body["analysis"]["status"] == "open"
     assert body["analysis"]["steps_proposed"] == 1
+
+
+@pytest.mark.parametrize("path, body, code", [
+    ("/session_start", {}, "SESSION_START_ERROR"),
+    ("/interview_question", {"session_id": "x"}, "INTERVIEW_QUESTION_ERROR"),
+    ("/analysis_submit", {"session_id": "x"}, "ANALYSIS_SUBMIT_ERROR"),
+    ("/step_add", {"session_id": "x", "title": "t"}, "STEP_ADD_ERROR"),
+    ("/step_edit", {}, "STEP_EDIT_ERROR"),
+    ("/pipeline_set_rules", {"session_id": "x"}, "PIPELINE_SET_RULES_ERROR"),
+])
+def test_missing_required_field_returns_400(client, path, body, code):
+    r = client.post(path, json=body)
+    data = r.json()
+    assert data["is_error"] is True
+    assert data["metadata"]["status"] == 400
+    assert data["metadata"]["error_code"] == code
+    payload = json.loads(data["content"][0]["text"])
+    assert "Missing required field" in payload["error"]
+
+
+def test_valid_request_still_succeeds_after_400_guard(client):
+    r = client.post("/project_create", json={"name": "ok", "path": "/tmp/ok-400"})
+    assert r.json()["is_error"] is False
+    payload = json.loads(r.json()["content"][0]["text"])
+    assert "project_id" in payload
