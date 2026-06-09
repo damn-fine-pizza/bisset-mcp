@@ -1,6 +1,6 @@
 # Bisset — Roadmap
 
-Updated: 2026-06-08 (hardening: HTTP 400 + atomic interview open). Order = priority. Each item ships as its own
+Updated: 2026-06-09 (workflow phases dropped after dogfooding). Order = priority. Each item ships as its own
 design → plan → reviewed implementation cycle (see `docs/plans/`).
 
 ## Delivered
@@ -35,25 +35,32 @@ design → plan → reviewed implementation cycle (see `docs/plans/`).
   `_require_lock` (subtle; in-memory per-instance lock; do isolated)
 - `analysis_approve` non-atomic materialization (writes N files to disk;
   declared single-user risk, not SQLite-transactionable)
+- gated artifact is behave-shaped: `analysis_submit`'s `feature_draft` and
+  `step_set_feature` both `check_syntax`-validate Gherkin, so a pytest-tested
+  change (Bisset's own domain) can't ride them — its real step ends up with
+  `feature_path=None`, the test/gate loop never engages without a manual
+  `step_edit` of `feature_path` to the test file. Surfaced by dogfooding
+  (2026-06-09). Needs its own design: how non-behave projects carry a gated
+  artifact.
 
-## Later
+## Dropped
 
-### Workflow phases (deferred — candidate for removal)
+### Workflow phases (was a roadmap item; removed 2026-06-09)
 The v2 design framed `new_project` / `new_feature` / `generate_tests` as
 meta-phases (interview → design → generate → execute) that produce concrete
-steps and then disappear. **This is now largely subsumed:** interview tools,
-analysis tools, and the execute loop each already implement the "meta-step
-that produces steps and disappears" pattern, and `workflow_type` is otherwise
-a dead label. Building a phase state machine on top would mostly re-litigate
-the conditional gates already shipped with interview and analysis (premature
-abstraction over two working flows). The only residual gap is the greenfield
-`design` phase of `new_project`, and even that is covered in practice by
-`analysis_submit` (a reviewable pipeline proposal) — framing, not capability.
+steps and then disappear. This is **fully subsumed** by what shipped: interview
+tools, analysis tools, and the execute loop each already implement the
+"meta-step that produces steps and disappears" pattern, and `workflow_type` is
+otherwise a dead label. A phase state machine on top would only re-litigate the
+conditional gates already in interview and analysis.
 
-Decision: do not build now. Re-evaluate only if dogfooding (developing a
-real feature *through* Bisset) surfaces a concrete moment where
-`session_status` does not already tell the agent what to do next. Absent that
-evidence, this item is likely to be dropped.
+Dropped on dogfooding evidence (2026-06-09): driving a real session, at every
+point — empty session, after `analysis_submit`, after `analysis_approve` —
+`session_status` (workflow_type + interview/analysis blocks + steps + the
+`step_add` gate) already told the agent what to do next. No moment surfaced
+where a phase layer would have added navigation the agent lacked. The only
+residual gap (greenfield `design` for `new_project`) is covered in practice by
+`analysis_submit`. Kept here as a record so the question is not re-opened.
 
 ## Non-goals (for now)
 
