@@ -348,7 +348,8 @@ class Storage:
         self.conn.commit()
 
     def add_interview_question(self, session_id: str, question: str) -> str:
-        """Insert an open question with the next order number."""
+        """Insert an open question with the next order AND set the session's
+        interview_status='open', in a single transaction (atomic open)."""
         self._require_lock()
         qid = self._new_id()
         row = self.conn.execute(
@@ -360,6 +361,10 @@ class Storage:
             'INSERT INTO interview_questions (id, session_id, "order", question, '
             "status, asked_at) VALUES (?,?,?,?,?,?)",
             (qid, session_id, row[0], question, "open", time.time()),
+        )
+        self.conn.execute(
+            "UPDATE sessions SET interview_status='open' WHERE id=?",
+            (session_id,),
         )
         self.conn.commit()
         return qid

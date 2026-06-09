@@ -128,8 +128,11 @@ async def project_create(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        name = body["name"]
-        path = body["path"]
+        try:
+            name = body["name"]
+            path = body["path"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "PROJECT_CREATE_ERROR", 400)
         config = {k: v for k, v in body.items() if k not in ("name", "path")}
         pid = request.app.state.engine.create_project(name, path, **config)
         duration = (time.time() - start) * 1000
@@ -170,7 +173,10 @@ async def project_switch(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        project_id = body["project_id"]
+        try:
+            project_id = body["project_id"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "PROJECT_SWITCH_ERROR", 400)
         ok = request.app.state.engine.db.lock_project(project_id)
         if not ok:
             return ResponseWrapper.error("Project not found", "NOT_FOUND", 404)
@@ -190,7 +196,10 @@ async def session_start(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        project_id = body["project_id"]
+        try:
+            project_id = body["project_id"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "SESSION_START_ERROR", 400)
         workflow_type = body.get("workflow_type", "new_project")
         default_rules = body.get("default_rules")
         sid = request.app.state.engine.start_session(project_id, workflow_type, default_rules)
@@ -206,7 +215,10 @@ async def session_resume(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        project_id = body["project_id"]
+        try:
+            project_id = body["project_id"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "SESSION_RESUME_ERROR", 400)
         sid = request.app.state.engine.resume_session(project_id)
         status = request.app.state.engine.session_status(sid)
         duration = (time.time() - start) * 1000
@@ -253,8 +265,12 @@ async def interview_question(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        result = request.app.state.engine.interview_question(
-            body["session_id"], body["question"])
+        try:
+            session_id = body["session_id"]
+            question = body["question"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "INTERVIEW_QUESTION_ERROR", 400)
+        result = request.app.state.engine.interview_question(session_id, question)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success(result, duration)
     except Exception as e:
@@ -267,8 +283,12 @@ async def interview_answer(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        result = request.app.state.engine.interview_answer(
-            body["question_id"], body["answer"])
+        try:
+            question_id = body["question_id"]
+            answer = body["answer"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "INTERVIEW_ANSWER_ERROR", 400)
+        result = request.app.state.engine.interview_answer(question_id, answer)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success(result, duration)
     except Exception as e:
@@ -281,7 +301,11 @@ async def interview_complete(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        result = request.app.state.engine.interview_complete(body["session_id"])
+        try:
+            session_id = body["session_id"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "INTERVIEW_COMPLETE_ERROR", 400)
+        result = request.app.state.engine.interview_complete(session_id)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success(result, duration)
     except Exception as e:
@@ -298,8 +322,12 @@ async def analysis_submit(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        result = request.app.state.engine.analysis_submit(
-            body["session_id"], body["steps"])
+        try:
+            session_id = body["session_id"]
+            steps = body["steps"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "ANALYSIS_SUBMIT_ERROR", 400)
+        result = request.app.state.engine.analysis_submit(session_id, steps)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success(result, duration)
     except Exception as e:
@@ -324,7 +352,11 @@ async def analysis_approve(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        result = request.app.state.engine.analysis_approve(body["session_id"])
+        try:
+            session_id = body["session_id"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "ANALYSIS_APPROVE_ERROR", 400)
+        result = request.app.state.engine.analysis_approve(session_id)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success(result, duration)
     except Exception as e:
@@ -337,7 +369,11 @@ async def analysis_discard(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        result = request.app.state.engine.analysis_discard(body["session_id"])
+        try:
+            session_id = body["session_id"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "ANALYSIS_DISCARD_ERROR", 400)
+        result = request.app.state.engine.analysis_discard(session_id)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success(result, duration)
     except Exception as e:
@@ -368,8 +404,14 @@ async def step_set_feature(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
+        try:
+            step_id = body["step_id"]
+            session_id = body["session_id"]
+            content = body["content"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "STEP_SET_FEATURE_ERROR", 400)
         result = request.app.state.engine.set_feature(
-            body["step_id"], body["session_id"], body["content"],
+            step_id, session_id, content,
             filename=body.get("filename"),
         )
         duration = (time.time() - start) * 1000
@@ -408,8 +450,11 @@ async def step_run_tests(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        step_id = body["step_id"]
-        session_id = body["session_id"]
+        try:
+            step_id = body["step_id"]
+            session_id = body["session_id"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "STEP_RUN_TESTS_ERROR", 400)
         result, drifted = request.app.state.engine.run_tests(step_id, session_id)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success({
@@ -429,8 +474,11 @@ async def step_complete(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        step_id = body["step_id"]
-        session_id = body["session_id"]
+        try:
+            step_id = body["step_id"]
+            session_id = body["session_id"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "STEP_COMPLETE_ERROR", 400)
         action = request.app.state.engine.complete_step(step_id, session_id)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success({"action": action}, duration)
@@ -444,8 +492,11 @@ async def step_skip(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        step_id = body["step_id"]
-        session_id = body["session_id"]
+        try:
+            step_id = body["step_id"]
+            session_id = body["session_id"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "STEP_SKIP_ERROR", 400)
         reason = body.get("reason", "")
         request.app.state.engine.skip_step(step_id, session_id, reason)
         duration = (time.time() - start) * 1000
@@ -472,10 +523,13 @@ async def step_add(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        session_id = body["session_id"]
-        title = body["title"]
+        try:
+            session_id = body["session_id"]
+            title = body["title"]
+            order = body["order"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "STEP_ADD_ERROR", 400)
         description = body.get("description", "")
-        order = body["order"]
         kwargs = {k: v for k, v in body.items()
                   if k not in ("session_id", "title", "description", "order")}
         step_id = request.app.state.engine.add_step(session_id, title, description, order, **kwargs)
@@ -491,7 +545,10 @@ async def step_remove(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        step_id = body["step_id"]
+        try:
+            step_id = body["step_id"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "STEP_REMOVE_ERROR", 400)
         ok = request.app.state.engine.db.remove_step(step_id)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success({"step_id": step_id, "removed": ok}, duration)
@@ -505,7 +562,10 @@ async def step_edit(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        step_id = body.pop("step_id")
+        try:
+            step_id = body.pop("step_id")
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "STEP_EDIT_ERROR", 400)
         request.app.state.engine.db.update_step(step_id, **body)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success({"step_id": step_id, "updated": True}, duration)
@@ -519,8 +579,11 @@ async def step_reorder(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        session_id = body["session_id"]
-        step_ids = body["step_ids"]
+        try:
+            session_id = body["session_id"]
+            step_ids = body["step_ids"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "STEP_REORDER_ERROR", 400)
         request.app.state.engine.db.reorder_steps(session_id, step_ids)
         duration = (time.time() - start) * 1000
         return ResponseWrapper.success({"session_id": session_id, "reordered": True}, duration)
@@ -546,8 +609,11 @@ async def pipeline_set_rules(request: Request) -> Dict[str, Any]:
     start = time.time()
     try:
         body = await request.json()
-        session_id = body["session_id"]
-        default_rules = body["default_rules"]
+        try:
+            session_id = body["session_id"]
+            default_rules = body["default_rules"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "PIPELINE_SET_RULES_ERROR", 400)
         # Store rules as JSON in the session
         db = request.app.state.engine.db
         db.conn.execute(

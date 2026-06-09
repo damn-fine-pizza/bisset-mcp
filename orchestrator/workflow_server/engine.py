@@ -108,7 +108,6 @@ class WorkflowEngine:
             )
         reopened = session.get("interview_status") == "complete"
         qid = self.db.add_interview_question(session_id, question)
-        self.db.set_interview_status(session_id, "open")
         if reopened:
             self.db.add_event(session_id, "interview_reopened",
                               data={"question_id": qid})

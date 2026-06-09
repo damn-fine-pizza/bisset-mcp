@@ -458,3 +458,35 @@ def test_proposal_steps_per_session_isolation(db):
     db.replace_proposal_steps(sid2, [])
     assert db.list_proposal_steps(sid2) == []
     assert len(db.list_proposal_steps(sid1)) == 2
+
+
+def test_add_interview_question_opens_interview_atomically(db):
+    """add_interview_question sets interview_status='open' AND inserts the row
+    in a single transaction (one commit). The status write is the red-first
+    lever: the old method left interview_status untouched."""
+    pid = db.create_project("atomic", "/tmp/atomic-iq", "pytest", "", "pytest", "features/")
+    db.lock_project(pid)
+    sid = db.create_session("new_project")
+
+    commits = []
+    real_conn = db.conn
+
+    class _CountingConn:
+        def commit(self):
+            commits.append(1)
+            return real_conn.commit()
+
+        def __getattr__(self, name):
+            return getattr(real_conn, name)
+
+    db.conn = _CountingConn()
+    try:
+        qid = db.add_interview_question(sid, "What does it do?")
+    finally:
+        db.conn = real_conn
+
+    # both writes landed (status is the red assertion vs. the old code)
+    assert db.get_session(sid)["interview_status"] == "open"
+    assert db.get_interview_question(qid)["status"] == "open"
+    # ...in exactly one transaction (pins atomicity)
+    assert len(commits) == 1

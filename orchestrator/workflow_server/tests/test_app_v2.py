@@ -468,3 +468,69 @@ def test_session_resume_reports_analysis_block(client):
     body = json.loads(r.json()["content"][0]["text"])
     assert body["analysis"]["status"] == "open"
     assert body["analysis"]["steps_proposed"] == 1
+
+
+# Every POST handler with required body fields: an empty body must 400 (not
+# 500) with that handler's error code. Exhaustive over all 19 routes so a
+# future edit that drops a guard fails here.
+@pytest.mark.parametrize("path, code", [
+    ("/project_create", "PROJECT_CREATE_ERROR"),
+    ("/project_switch", "PROJECT_SWITCH_ERROR"),
+    ("/session_start", "SESSION_START_ERROR"),
+    ("/session_resume", "SESSION_RESUME_ERROR"),
+    ("/interview_question", "INTERVIEW_QUESTION_ERROR"),
+    ("/interview_answer", "INTERVIEW_ANSWER_ERROR"),
+    ("/interview_complete", "INTERVIEW_COMPLETE_ERROR"),
+    ("/analysis_submit", "ANALYSIS_SUBMIT_ERROR"),
+    ("/analysis_approve", "ANALYSIS_APPROVE_ERROR"),
+    ("/analysis_discard", "ANALYSIS_DISCARD_ERROR"),
+    ("/step_set_feature", "STEP_SET_FEATURE_ERROR"),
+    ("/step_run_tests", "STEP_RUN_TESTS_ERROR"),
+    ("/step_complete", "STEP_COMPLETE_ERROR"),
+    ("/step_skip", "STEP_SKIP_ERROR"),
+    ("/step_add", "STEP_ADD_ERROR"),
+    ("/step_remove", "STEP_REMOVE_ERROR"),
+    ("/step_edit", "STEP_EDIT_ERROR"),
+    ("/step_reorder", "STEP_REORDER_ERROR"),
+    ("/pipeline_set_rules", "PIPELINE_SET_RULES_ERROR"),
+])
+def test_missing_required_field_returns_400(client, path, code):
+    r = client.post(path, json={})
+    data = r.json()
+    assert data["is_error"] is True
+    assert data["metadata"]["status"] == 400
+    assert data["metadata"]["error_code"] == code
+    payload = json.loads(data["content"][0]["text"])
+    assert "Missing required field" in payload["error"]
+
+
+def test_valid_request_still_succeeds_after_400_guard(client):
+    r = client.post("/project_create", json={"name": "ok", "path": "/tmp/ok-400"})
+    assert r.json()["is_error"] is False
+    payload = json.loads(r.json()["content"][0]["text"])
+    assert "project_id" in payload
+
+
+def test_malformed_json_body_still_returns_500_not_400(client):
+    """Preservation: a non-JSON body is handled by the OUTER try (wrapped 500),
+    not mislabelled as a missing field. Locks the nested-try scoping."""
+    r = client.post("/session_start", content="this is not json",
+                    headers={"content-type": "application/json"})
+    data = r.json()
+    assert data["is_error"] is True
+    assert data["metadata"]["status"] == 500
+    payload = json.loads(data["content"][0]["text"])
+    assert "Missing required field" not in payload["error"]
+
+
+def test_deeper_error_not_mislabelled_missing_field(client):
+    """Preservation: a domain error with all required fields present falls
+    through to the wrapped 500 — the 400 guard catches ONLY missing top-level
+    fields, never a deeper failure."""
+    # all required fields present; the session simply does not exist
+    r = client.post("/interview_complete", json={"session_id": "does-not-exist"})
+    data = r.json()
+    assert data["is_error"] is True
+    assert data["metadata"]["status"] == 500
+    payload = json.loads(data["content"][0]["text"])
+    assert "Missing required field" not in payload["error"]
