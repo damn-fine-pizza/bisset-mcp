@@ -23,6 +23,23 @@ DEFAULT_RULES = [
 ]
 
 
+def safe_project_relative_path(path: str) -> str:
+    """Normalize a project-relative artifact path.
+
+    Rejects empty input, absolute paths, and any path that escapes the
+    project root via traversal. Returns the normalized relative path.
+    """
+    raw = (path or "").strip()
+    if not raw:
+        raise ValueError("Empty test path")
+    if os.path.isabs(raw):
+        raise ValueError(f"Test path must be project-relative: {path!r}")
+    norm = os.path.normpath(raw)
+    if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
+        raise ValueError(f"Test path escapes project root: {path!r}")
+    return norm
+
+
 class WorkflowEngine:
     """Core workflow engine integrating storage, rules, and test adapters."""
 

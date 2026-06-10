@@ -832,3 +832,34 @@ def test_analysis_reapprove_after_resubmit_writes_distinct_files(engine, tmp_pat
     assert r["steps"][0]["feature_path"] == "features/02-cover-health.feature"
     assert (tmp_path / "features" / "01-cover-health.feature").read_text() == VALID_FEATURE
     assert (tmp_path / "features" / "02-cover-health.feature").read_text() == second
+
+
+# ---------------------------------------------------------------------------
+# Task 1 — safe_project_relative_path
+# ---------------------------------------------------------------------------
+
+from orchestrator.workflow_server.engine import safe_project_relative_path
+
+
+def test_safe_project_relative_path_accepts_subdir():
+    assert safe_project_relative_path("tests/test_foo.py") == "tests/test_foo.py"
+
+
+def test_safe_project_relative_path_normalizes_inside():
+    # a/../b stays inside the root -> normalized to b
+    assert safe_project_relative_path("tests/../tests/test_foo.py") == "tests/test_foo.py"
+
+
+def test_safe_project_relative_path_rejects_absolute():
+    with pytest.raises(ValueError):
+        safe_project_relative_path("/etc/passwd")
+
+
+def test_safe_project_relative_path_rejects_traversal():
+    with pytest.raises(ValueError):
+        safe_project_relative_path("../evil.py")
+
+
+def test_safe_project_relative_path_rejects_empty():
+    with pytest.raises(ValueError):
+        safe_project_relative_path("   ")
