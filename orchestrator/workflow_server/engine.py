@@ -443,6 +443,34 @@ class WorkflowEngine:
         return {"written": True, "feature_path": rel_path,
                 "hash": digest, "errors": []}
 
+    def set_test_path(self, step_id: str, session_id: str, path: str) -> dict:
+        """Point a step at an existing non-Gherkin test file (pointer-only).
+
+        Stores only feature_path (project-relative, validated, must exist) and
+        clears any stale Gherkin feature_content/feature_hash. Bisset stays
+        agnostic about the file's content; run_tests reads disk at run time.
+        """
+        step = self.db.get_step(step_id)
+        if not step:
+            raise ValueError(f"Step not found: {step_id}")
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        project = self.db.get_project(session["project_id"])
+        if not project:
+            raise ValueError(f"Project not found: {session['project_id']}")
+
+        rel_path = safe_project_relative_path(path)
+        abs_path = os.path.join(project["path"], rel_path)
+        if not os.path.isfile(abs_path):
+            raise ValueError(f"Test file does not exist: {rel_path}")
+
+        self.db.update_step(step_id, feature_path=rel_path,
+                            feature_content=None, feature_hash=None)
+        self.db.add_event(session_id, "test_path_set", step_id=step_id,
+                          data={"feature_path": rel_path})
+        return {"feature_path": rel_path, "set": True}
+
     def _detect_drift(self, step: dict, session_id: str, abs_path: str) -> tuple[str, bool]:
         """Read disk content and realign the DB copy if it drifted.
 

@@ -863,3 +863,73 @@ def test_safe_project_relative_path_rejects_traversal():
 def test_safe_project_relative_path_rejects_empty():
     with pytest.raises(ValueError):
         safe_project_relative_path("   ")
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — set_test_path
+# ---------------------------------------------------------------------------
+
+def test_set_test_path_registers_pointer(engine, tmp_path):
+    pid = engine.create_project("pyapp", str(tmp_path), test_runner="pytest", adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Implement parser", "d", 1)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_parser.py").write_text("def test_x():\n    assert True\n")
+
+    result = engine.set_test_path(step_id, sid, "tests/test_parser.py")
+    assert result == {"feature_path": "tests/test_parser.py", "set": True}
+
+    step = engine.db.get_step(step_id)
+    assert step["feature_path"] == "tests/test_parser.py"
+    assert step["feature_content"] is None
+    assert step["feature_hash"] is None
+
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "test_path_set" for e in events)
+
+
+def test_set_test_path_clears_stale_gherkin(engine, tmp_path):
+    pid = engine.create_project("mix", str(tmp_path), test_runner="pytest", adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    # first a Gherkin feature, then re-point at a pytest file
+    engine.set_feature(step_id, sid, VALID_FEATURE)
+    assert engine.db.get_step(step_id)["feature_content"] is not None
+    (tmp_path / "test_s.py").write_text("def test_x():\n    assert True\n")
+
+    engine.set_test_path(step_id, sid, "test_s.py")
+    step = engine.db.get_step(step_id)
+    assert step["feature_path"] == "test_s.py"
+    assert step["feature_content"] is None
+    assert step["feature_hash"] is None
+
+
+def test_set_test_path_rejects_missing_file(engine, tmp_path):
+    pid = engine.create_project("pyapp", str(tmp_path), adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    with pytest.raises(ValueError, match="does not exist"):
+        engine.set_test_path(step_id, sid, "tests/missing.py")
+
+
+def test_set_test_path_rejects_traversal(engine, tmp_path):
+    pid = engine.create_project("pyapp", str(tmp_path), adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    with pytest.raises(ValueError):
+        engine.set_test_path(step_id, sid, "../evil.py")
+
+
+def test_set_test_path_unknown_session_raises(engine, tmp_path):
+    pid = engine.create_project("pyapp", str(tmp_path), adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    with pytest.raises(ValueError, match="Session not found"):
+        engine.set_test_path(step_id, "nonexistent", "test_s.py")
+
+
+def test_set_test_path_unknown_step_raises(engine, tmp_path):
+    pid = engine.create_project("pyapp", str(tmp_path), adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    with pytest.raises(ValueError, match="Step not found"):
+        engine.set_test_path("nonexistent", sid, "test_s.py")
