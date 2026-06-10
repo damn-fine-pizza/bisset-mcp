@@ -298,6 +298,27 @@ def test_step_validate_feature_requires_behave(client, tmp_path):
     assert data["is_error"] is True  # behave adapter required
 
 
+def test_step_set_test_path_endpoint(client, tmp_path):
+    r = client.post("/project_create", json={
+        "name": "py-app", "path": str(tmp_path),
+        "test_runner": "pytest", "adapter": "pytest",
+    })
+    pid = _payload(r)["project_id"]
+    r = client.post("/session_start", json={"project_id": pid, "workflow_type": "new_feature"})
+    sid = _payload(r)["session_id"]
+    r = client.post("/step_add", json={"session_id": sid, "title": "Parse", "order": 1})
+    step_id = _payload(r)["step_id"]
+
+    (tmp_path / "test_parse.py").write_text("def test_x():\n    assert True\n")
+    r = client.post("/step_set_test_path", json={
+        "step_id": step_id, "session_id": sid, "path": "test_parse.py",
+    })
+    assert r.status_code == 200
+    body = _payload(r)
+    assert body["set"] is True
+    assert body["feature_path"] == "test_parse.py"
+
+
 def _interview_session(client, path):
     r = client.post("/project_create", json={"name": "iv-app", "path": path})
     pid = _payload(r)["project_id"]
@@ -485,6 +506,7 @@ def test_session_resume_reports_analysis_block(client):
     ("/analysis_approve", "ANALYSIS_APPROVE_ERROR"),
     ("/analysis_discard", "ANALYSIS_DISCARD_ERROR"),
     ("/step_set_feature", "STEP_SET_FEATURE_ERROR"),
+    ("/step_set_test_path", "STEP_SET_TEST_PATH_ERROR"),
     ("/step_run_tests", "STEP_RUN_TESTS_ERROR"),
     ("/step_complete", "STEP_COMPLETE_ERROR"),
     ("/step_skip", "STEP_SKIP_ERROR"),

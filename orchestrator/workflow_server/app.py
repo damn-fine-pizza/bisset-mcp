@@ -420,6 +420,25 @@ async def step_set_feature(request: Request) -> Dict[str, Any]:
         return ResponseWrapper.error(str(e), "STEP_SET_FEATURE_ERROR", 500)
 
 
+@app.post("/step_set_test_path")
+async def step_set_test_path(request: Request) -> Dict[str, Any]:
+    """Point a step at an existing non-Gherkin test file (pointer-only)."""
+    start = time.time()
+    try:
+        body = await request.json()
+        try:
+            step_id = body["step_id"]
+            session_id = body["session_id"]
+            path = body["path"]
+        except KeyError as e:
+            return ResponseWrapper.error(f"Missing required field: {e}", "STEP_SET_TEST_PATH_ERROR", 400)
+        result = request.app.state.engine.set_test_path(step_id, session_id, path)
+        duration = (time.time() - start) * 1000
+        return ResponseWrapper.success(result, duration)
+    except Exception as e:
+        return ResponseWrapper.error(str(e), "STEP_SET_TEST_PATH_ERROR", 500)
+
+
 @app.get("/step_get_feature")
 async def step_get_feature(request: Request, step_id: str, session_id: str) -> Dict[str, Any]:
     """Read a step's feature from disk, reporting drift and missing file."""
