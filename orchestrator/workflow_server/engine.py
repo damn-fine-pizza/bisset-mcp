@@ -465,6 +465,11 @@ class WorkflowEngine:
         if not os.path.isfile(abs_path):
             raise ValueError(f"Test file does not exist: {rel_path}")
 
+        real_project = os.path.realpath(project["path"])
+        real_abs = os.path.realpath(abs_path)
+        if real_abs != real_project and not real_abs.startswith(real_project + os.sep):
+            raise ValueError(f"Test path resolves outside project root: {rel_path}")
+
         self.db.update_step(step_id, feature_path=rel_path,
                             feature_content=None, feature_hash=None)
         self.db.add_event(session_id, "test_path_set", step_id=step_id,

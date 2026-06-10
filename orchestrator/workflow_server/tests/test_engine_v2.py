@@ -961,3 +961,18 @@ def test_pytest_step_gate_red_blocks_green_advances(engine, tmp_path):
     engine.run_tests(step_id, sid)
     action_green = engine.complete_step(step_id, sid)
     assert action_green == "advance"  # gate opens only on green
+
+
+def test_set_test_path_rejects_symlink_escape(engine, tmp_path, tmp_path_factory):
+    # A symlink inside the project pointing outside must be rejected:
+    # isfile() follows symlinks, so lexical validation alone is not enough.
+    outside = tmp_path_factory.mktemp("outside")
+    secret = outside / "secret.py"
+    secret.write_text("def test_x():\n    assert True\n")
+    pid = engine.create_project("pyapp", str(tmp_path), adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    link = tmp_path / "evil.py"
+    link.symlink_to(secret)
+    with pytest.raises(ValueError, match="outside project root"):
+        engine.set_test_path(step_id, sid, "evil.py")
