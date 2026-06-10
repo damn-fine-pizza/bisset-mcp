@@ -90,6 +90,7 @@ exit-code-only parsing.
 | `step_set_feature` | Agent submits Gherkin; Bisset validates the structure, writes the file into `features_dir`, registers content + SHA-256 |
 | `step_get_feature` | Reads the feature from disk (truth); reports `feature_drifted` / `file_missing` and realigns the registry |
 | `step_validate_feature` | behave dry-run: `syntax_ok` and `steps_defined` as separate verdicts plus `undefined_steps[]` |
+| `step_set_test_path` | Points a step at an existing non-Gherkin test file (e.g. a pytest module) so the test/gate loop engages; registers the project-relative path (must exist, no traversal), clears any Gherkin content/hash. Pointer-only: Bisset never writes or parses the file |
 
 Drift policy: the human owns the spec. Manual edits never block execution;
 they are detected (hash mismatch), reported in tool responses, logged as
@@ -167,4 +168,6 @@ Audit: `analysis_submitted`, `analysis_revised`, `analysis_approved`,
 - Coverage is measured at **scenario level** (passed/total), not at code line
   level, and only by the behave adapter.
 - A step without `feature_path` produces `no_tests` → `ask_user` under the
-  default rules (graceful degradation, never silent acceptance).
+  default rules (graceful degradation, never silent acceptance). Behave steps
+  get `feature_path` from `step_set_feature`; non-behave steps (pytest/generic)
+  get it from `step_set_test_path`, which points at the test file directly.
