@@ -25,6 +25,10 @@ design → plan → reviewed implementation cycle (see `docs/plans/`).
 - **Hardening** — missing required POST body fields return HTTP 400 (not 500);
   opening an interview question is atomic (row + `interview_status` in one
   transaction)
+- **Non-behave gated artifact** — `step_set_test_path`: a pointer-only tool that
+  registers an existing test file (e.g. a pytest module) as a step's run target,
+  so non-behave projects engage the test/gate loop without Gherkin. Gate proven
+  end-to-end (red blocks, green advances) against a real pytest subprocess
 
 ## Next
 
@@ -35,14 +39,6 @@ design → plan → reviewed implementation cycle (see `docs/plans/`).
   `_require_lock` (subtle; in-memory per-instance lock; do isolated)
 - `analysis_approve` non-atomic materialization (writes N files to disk;
   declared single-user risk, not SQLite-transactionable)
-- gated artifact is behave-shaped: `analysis_submit`'s `feature_draft` and
-  `step_set_feature` both `check_syntax`-validate Gherkin, so a pytest-tested
-  change (Bisset's own domain) can't ride them — its real step ends up with
-  `feature_path=None`, the test/gate loop never engages without a manual
-  `step_edit` of `feature_path` to the test file. Surfaced by dogfooding
-  (2026-06-09). Needs its own design: how non-behave projects carry a gated
-  artifact.
-
 ## Dropped
 
 ### Workflow phases (was a roadmap item; removed 2026-06-09)

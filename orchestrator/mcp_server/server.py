@@ -121,6 +121,12 @@ class BissetMCPServer:
                  "step_id": {"type": "string"}, "session_id": {"type": "string"},
                  "content": {"type": "string"}, "filename": {"type": "string"},
              }, "required": ["step_id", "session_id", "content"]}},
+            {"name": "step_set_test_path",
+             "description": "Point a step at an existing non-Gherkin test file (e.g. a pytest module) so the test/gate loop engages; registers the project-relative path, no Gherkin validation",
+             "inputSchema": {"type": "object", "properties": {
+                 "step_id": {"type": "string"}, "session_id": {"type": "string"},
+                 "path": {"type": "string"},
+             }, "required": ["step_id", "session_id", "path"]}},
             {"name": "step_get_feature",
              "description": "Read the step's .feature from disk (truth); reports feature_drifted and file_missing",
              "inputSchema": {"type": "object", "properties": {

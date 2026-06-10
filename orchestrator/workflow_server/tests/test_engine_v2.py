@@ -1,4 +1,5 @@
 """Tests for Bisset v2 Workflow Engine."""
+import sys
 import pytest
 from orchestrator.workflow_server.storage import Storage
 from orchestrator.workflow_server.engine import WorkflowEngine
@@ -832,3 +833,146 @@ def test_analysis_reapprove_after_resubmit_writes_distinct_files(engine, tmp_pat
     assert r["steps"][0]["feature_path"] == "features/02-cover-health.feature"
     assert (tmp_path / "features" / "01-cover-health.feature").read_text() == VALID_FEATURE
     assert (tmp_path / "features" / "02-cover-health.feature").read_text() == second
+
+
+# ---------------------------------------------------------------------------
+# Task 1 — safe_project_relative_path
+# ---------------------------------------------------------------------------
+
+from orchestrator.workflow_server.engine import safe_project_relative_path
+
+
+def test_safe_project_relative_path_accepts_subdir():
+    assert safe_project_relative_path("tests/test_foo.py") == "tests/test_foo.py"
+
+
+def test_safe_project_relative_path_normalizes_inside():
+    # a/../b stays inside the root -> normalized to b
+    assert safe_project_relative_path("tests/../tests/test_foo.py") == "tests/test_foo.py"
+
+
+def test_safe_project_relative_path_rejects_absolute():
+    with pytest.raises(ValueError):
+        safe_project_relative_path("/etc/passwd")
+
+
+def test_safe_project_relative_path_rejects_traversal():
+    with pytest.raises(ValueError):
+        safe_project_relative_path("../evil.py")
+
+
+def test_safe_project_relative_path_rejects_empty():
+    with pytest.raises(ValueError):
+        safe_project_relative_path("   ")
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — set_test_path
+# ---------------------------------------------------------------------------
+
+def test_set_test_path_registers_pointer(engine, tmp_path):
+    pid = engine.create_project("pyapp", str(tmp_path), test_runner="pytest", adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Implement parser", "d", 1)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_parser.py").write_text("def test_x():\n    assert True\n")
+
+    result = engine.set_test_path(step_id, sid, "tests/test_parser.py")
+    assert result == {"feature_path": "tests/test_parser.py", "set": True}
+
+    step = engine.db.get_step(step_id)
+    assert step["feature_path"] == "tests/test_parser.py"
+    assert step["feature_content"] is None
+    assert step["feature_hash"] is None
+
+    events = engine.db.list_events(sid)
+    assert any(e["event_type"] == "test_path_set" for e in events)
+
+
+def test_set_test_path_clears_stale_gherkin(engine, tmp_path):
+    pid = engine.create_project("mix", str(tmp_path), test_runner="pytest", adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    # first a Gherkin feature, then re-point at a pytest file
+    engine.set_feature(step_id, sid, VALID_FEATURE)
+    assert engine.db.get_step(step_id)["feature_content"] is not None
+    (tmp_path / "test_s.py").write_text("def test_x():\n    assert True\n")
+
+    engine.set_test_path(step_id, sid, "test_s.py")
+    step = engine.db.get_step(step_id)
+    assert step["feature_path"] == "test_s.py"
+    assert step["feature_content"] is None
+    assert step["feature_hash"] is None
+
+
+def test_set_test_path_rejects_missing_file(engine, tmp_path):
+    pid = engine.create_project("pyapp", str(tmp_path), adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    with pytest.raises(ValueError, match="does not exist"):
+        engine.set_test_path(step_id, sid, "tests/missing.py")
+
+
+def test_set_test_path_rejects_traversal(engine, tmp_path):
+    pid = engine.create_project("pyapp", str(tmp_path), adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    with pytest.raises(ValueError):
+        engine.set_test_path(step_id, sid, "../evil.py")
+
+
+def test_set_test_path_unknown_session_raises(engine, tmp_path):
+    pid = engine.create_project("pyapp", str(tmp_path), adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    with pytest.raises(ValueError, match="Session not found"):
+        engine.set_test_path(step_id, "nonexistent", "test_s.py")
+
+
+def test_set_test_path_unknown_step_raises(engine, tmp_path):
+    pid = engine.create_project("pyapp", str(tmp_path), adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    with pytest.raises(ValueError, match="Step not found"):
+        engine.set_test_path("nonexistent", sid, "test_s.py")
+
+
+def test_pytest_step_gate_red_blocks_green_advances(engine, tmp_path):
+    # A non-behave project: real pytest subprocess, default gate (tests_only).
+    pid = engine.create_project(
+        "pyproj", str(tmp_path),
+        test_runner=sys.executable,
+        test_args="-m pytest -q -p no:cacheprovider",
+        adapter="pytest",
+    )
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Add feature", "d", 1)
+
+    target = tmp_path / "test_target.py"
+    # RED: failing test
+    target.write_text("def test_it():\n    assert False\n")
+    engine.set_test_path(step_id, sid, "test_target.py")
+
+    engine.run_tests(step_id, sid)
+    action_red = engine.complete_step(step_id, sid)
+    assert action_red == "retry"  # gate blocks: red never advances
+
+    # GREEN: same target now passes
+    target.write_text("def test_it():\n    assert True\n")
+    engine.run_tests(step_id, sid)
+    action_green = engine.complete_step(step_id, sid)
+    assert action_green == "advance"  # gate opens only on green
+
+
+def test_set_test_path_rejects_symlink_escape(engine, tmp_path, tmp_path_factory):
+    # A symlink inside the project pointing outside must be rejected:
+    # isfile() follows symlinks, so lexical validation alone is not enough.
+    outside = tmp_path_factory.mktemp("outside")
+    secret = outside / "secret.py"
+    secret.write_text("def test_x():\n    assert True\n")
+    pid = engine.create_project("pyapp", str(tmp_path), adapter="pytest")
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "S", "d", 1)
+    link = tmp_path / "evil.py"
+    link.symlink_to(secret)
+    with pytest.raises(ValueError, match="outside project root"):
+        engine.set_test_path(step_id, sid, "evil.py")

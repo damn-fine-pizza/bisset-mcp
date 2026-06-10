@@ -23,6 +23,23 @@ DEFAULT_RULES = [
 ]
 
 
+def safe_project_relative_path(path: str) -> str:
+    """Normalize a project-relative artifact path.
+
+    Rejects empty input, absolute paths, and any path that escapes the
+    project root via traversal. Returns the normalized relative path.
+    """
+    raw = (path or "").strip()
+    if not raw:
+        raise ValueError("Empty test path")
+    if os.path.isabs(raw):
+        raise ValueError(f"Test path must be project-relative: {path!r}")
+    norm = os.path.normpath(raw)
+    if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
+        raise ValueError(f"Test path escapes project root: {path!r}")
+    return norm
+
+
 class WorkflowEngine:
     """Core workflow engine integrating storage, rules, and test adapters."""
 
@@ -425,6 +442,39 @@ class WorkflowEngine:
                           data={"feature_path": rel_path, "hash": digest})
         return {"written": True, "feature_path": rel_path,
                 "hash": digest, "errors": []}
+
+    def set_test_path(self, step_id: str, session_id: str, path: str) -> dict:
+        """Point a step at an existing non-Gherkin test file (pointer-only).
+
+        Stores only feature_path (project-relative, validated, must exist) and
+        clears any stale Gherkin feature_content/feature_hash. Bisset stays
+        agnostic about the file's content; run_tests reads disk at run time.
+        """
+        step = self.db.get_step(step_id)
+        if not step:
+            raise ValueError(f"Step not found: {step_id}")
+        session = self.db.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        project = self.db.get_project(session["project_id"])
+        if not project:
+            raise ValueError(f"Project not found: {session['project_id']}")
+
+        rel_path = safe_project_relative_path(path)
+        abs_path = os.path.join(project["path"], rel_path)
+        if not os.path.isfile(abs_path):
+            raise ValueError(f"Test file does not exist: {rel_path}")
+
+        real_project = os.path.realpath(project["path"])
+        real_abs = os.path.realpath(abs_path)
+        if real_abs != real_project and not real_abs.startswith(real_project + os.sep):
+            raise ValueError(f"Test path resolves outside project root: {rel_path}")
+
+        self.db.update_step(step_id, feature_path=rel_path,
+                            feature_content=None, feature_hash=None)
+        self.db.add_event(session_id, "test_path_set", step_id=step_id,
+                          data={"feature_path": rel_path})
+        return {"feature_path": rel_path, "set": True}
 
     def _detect_drift(self, step: dict, session_id: str, abs_path: str) -> tuple[str, bool]:
         """Read disk content and realign the DB copy if it drifted.
