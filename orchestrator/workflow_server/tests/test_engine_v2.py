@@ -1,4 +1,5 @@
 """Tests for Bisset v2 Workflow Engine."""
+import sys
 import pytest
 from orchestrator.workflow_server.storage import Storage
 from orchestrator.workflow_server.engine import WorkflowEngine
@@ -933,3 +934,30 @@ def test_set_test_path_unknown_step_raises(engine, tmp_path):
     sid = engine.start_session(pid, "new_feature")
     with pytest.raises(ValueError, match="Step not found"):
         engine.set_test_path("nonexistent", sid, "test_s.py")
+
+
+def test_pytest_step_gate_red_blocks_green_advances(engine, tmp_path):
+    # A non-behave project: real pytest subprocess, default gate (tests_only).
+    pid = engine.create_project(
+        "pyproj", str(tmp_path),
+        test_runner=sys.executable,
+        test_args="-m pytest -q -p no:cacheprovider",
+        adapter="pytest",
+    )
+    sid = engine.start_session(pid, "new_feature")
+    step_id = engine.add_step(sid, "Add feature", "d", 1)
+
+    target = tmp_path / "test_target.py"
+    # RED: failing test
+    target.write_text("def test_it():\n    assert False\n")
+    engine.set_test_path(step_id, sid, "test_target.py")
+
+    engine.run_tests(step_id, sid)
+    action_red = engine.complete_step(step_id, sid)
+    assert action_red == "retry"  # gate blocks: red never advances
+
+    # GREEN: same target now passes
+    target.write_text("def test_it():\n    assert True\n")
+    engine.run_tests(step_id, sid)
+    action_green = engine.complete_step(step_id, sid)
+    assert action_green == "advance"  # gate opens only on green
